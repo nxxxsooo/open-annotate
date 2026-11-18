@@ -280,21 +280,24 @@ async function cmdTui(targetPath, options) {
   await reviewTui(targetPath, { session, binary, opener })
 }
 
-async function cmdHerdrReview(options) {
+async function cmdHerdrReview(options, shortcut) {
   const bin = process.env.HERDR_BIN_PATH || "herdr"
   const binary = path.resolve(resolveTuiBinary(options.binary))
   try {
-    const pane = focusedPane(process.env)
+    const pane = shortcut?.pane ?? focusedPane(process.env)
     const agent = await readHerdrAgent(bin, pane)
-    if (["claude", "codex", "pi", "opencode"].includes(agent.agent)) {
+    if (!shortcut && ["claude", "codex", "pi", "opencode"].includes(agent.agent)) {
       const { stdout } = await execute(binary, ["herdr", "last", "--newest", "--deliver-to", pane], { timeout: 5000 })
       console.log(stdout.trim())
       return
     }
     if (agent.agent !== "agy") throw new Error("This action supports AGY, Claude, Codex, Pi, and OpenCode panes.")
     const captured = { ...await captureHerdrConversation(bin, pane, agent), bin, pane, terminalId: agent.terminal_id }
+    if (shortcut && (!agent.focused || captured.conversationId !== shortcut.conversationId)) {
+      throw new Error("The AGY pane or conversation changed before Annotate opened.")
+    }
     const session = { conversationId: captured.conversationId, title: `AGY ${captured.conversationId.slice(0, 8)}` }
-    const status = await reviewTui(null, { session, binary, opener: { kind: "popup" }, captured })
+    const status = await reviewTui(shortcut?.document, { session, binary, opener: { kind: "popup" }, captured })
     if (status) await herdrCommand(bin, ["notification", "show", "Annotate", "--body", status]).catch(() => {})
   } catch (err) {
     await herdrCommand(bin, ["notification", "show", "Annotate", "--body", err.message]).catch(() => {})
@@ -309,7 +312,7 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
   let sourceHash = null
 
   if (targetPath) {
-    const resolvedPath = path.resolve(session.directory, targetPath)
+    const resolvedPath = path.isAbsolute(targetPath) ? targetPath : path.resolve(session.directory, targetPath)
     sourceText = await readFile(resolvedPath, "utf8")
     filePath = resolvedPath
     snapshotName = path.basename(resolvedPath)
@@ -421,6 +424,13 @@ async function main() {
   const command = args[0]
   if (command === "tui-pane") {
     await runTuiPane(args[1] || process.env.ANNOTATE_AGY_REVIEW_DIR)
+    return
+  }
+  if (command === "herdr-slash") {
+    const [, pane, conversationId, binary, document] = args
+    if (process.env.HERDR_ENV !== "1" || !pane || pane !== process.env.HERDR_PANE_ID ||
+        !conversationId || (document && !path.isAbsolute(document))) throw new Error("Invalid AGY slash launch.")
+    await cmdHerdrReview({ binary: binary || undefined }, { pane, conversationId, document })
     return
   }
   const options = {}

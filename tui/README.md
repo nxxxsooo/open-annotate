@@ -111,8 +111,10 @@ opens a 90% × 90% modal using the pane manifest's `popup` placement. Herdr 0.9.
 does not accept `popup` as a `--placement` CLI override. Send rechecks the AGY
 conversation before starting a turn in an idle/done pane or queuing to the AGY
 hooks while Herdr reports it is working. A blocked, unknown, or changed
-destination keeps the notes and shows the recovery path. The AGY `/annotate` skill still opens the `agy`
-overlay via a model tool call.
+destination keeps the notes and shows the recovery path. With matching AGY
+`PreInvocation` and `Stop` hooks, `/annotate` and `/annotate <local-document>`
+also open this popup before the model runs. If the pane or conversation cannot
+be verified, the existing skill handles the command instead.
 
 `herdr pane` is the plugin entrypoint: it reads the file, reply or terminal source
 passed by the launcher. Set `--placement overlay|split|tab|zoomed` on `herdr open`,

@@ -13,13 +13,13 @@ export function focusedPane(env) {
   return context.focused_pane_id
 }
 
-export async function herdrCommand(bin, args) {
-  const { stdout } = await execute(bin, args, { timeout: 5000 })
+export async function herdrCommand(bin, args, timeout = 5000) {
+  const { stdout } = await execute(bin, args, { timeout })
   return JSON.parse(stdout).result
 }
 
-export async function readHerdrAgent(bin, pane) {
-  const agent = (await herdrCommand(bin, ["agent", "get", pane])).agent
+export async function readHerdrAgent(bin, pane, timeout) {
+  const agent = (await herdrCommand(bin, ["agent", "get", pane], timeout)).agent
   if (!agent?.terminal_id) throw new Error("Herdr did not identify the focused agent terminal.")
   return agent
 }

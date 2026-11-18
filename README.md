@@ -119,7 +119,8 @@ Bind **prefix, then `a`** (`Ctrl+B`, then `a` by default) to
 In AGY this opens a floating Markdown reviewer without starting a model turn.
 Send starts a turn if AGY is idle or done, or queues feedback if it is working.
 Quit sends nothing. Claude, Codex, Pi, and OpenCode use the existing `herdr last`
-route. AGY's `/annotate` skill remains available, but invokes the model first.
+route. With the AGY hooks installed, `/annotate` can open the same popup before
+the model runs; the skill remains available as a fallback.
 
 Run the bundled `annotate-tui` directly from a Herdr pane. Herdr needs an enabled
 `annotate` plugin with a `doc` pane entrypoint; see the [TUI setup](tui/README.md#herdr).
@@ -163,7 +164,7 @@ documents and webpages.
 - **Slash command `/annotate`**: Built-in AGY skill at `agy/skills/annotate/` handles text and explicit URL/HTML review within active AGY sessions.
 - **Interactive TUI**: Uses the same bundled reviewer as OpenCode, with a Dracula palette. In Herdr 0.9.5, add the `agy` pane to the [local `annotate` plugin manifest](tui/README.md#herdr) to open `/annotate` over the AGY tab. Outside Herdr, the skill opens Ghostty or Terminal as before.
 - **Send or quit**: `Ctrl+S` (or the Send button) submits to the originating AGY conversation. `q` and `Ctrl+C` close without submitting.
-- **Native Delivery**: Configure AGY lifecycle hooks (`SessionStart`, `PreInvocation`, `Stop`) using `agy/hooks.mjs` from the same package as `agy-annotate`. Only the hooks deliver feedback; the review command returns status.
+- **AGY hooks**: Configure `SessionStart`, `PreInvocation`, and `Stop` to run `agy/hooks.mjs` from the same package as `agy-annotate`. In a focused, identified Herdr AGY pane with the `agy-popup` entrypoint, the hook handles `/annotate` (or a local document argument) before the model runs. Other cases still use the skill. Hook delivery stays scoped to the captured conversation.
 - **CLI Commands**:
   ```sh
   npx --package @nxxxsooo/opencode-annotate@latest agy-annotate status
