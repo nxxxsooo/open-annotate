@@ -76,7 +76,10 @@ command = ["/absolute/path/to/annotate-tui", "herdr", "pane"]
 ```
 
 `herdr pane` is the plugin entrypoint: it reads the file, reply or terminal source
-passed by the launcher. Agent delivery uses `herdr agent prompt`; a blocked send
+passed by the launcher. Set `--placement overlay|split|tab|zoomed` on `herdr open`,
+`herdr last` or `herdr terminal`; the default is `overlay`. Remove any old
+`popup_width` and `popup_height` settings and replace `placement = "popup"` with
+one of the supported values. Agent delivery uses `herdr agent prompt`; a blocked send
 leaves notes pending for a manual retry and attempts an OSC 52 clipboard copy.
 OpenCode's `/annotate` clears the inherited `HERDR_*` variables before launching
 the reviewer, so it does not use this route.

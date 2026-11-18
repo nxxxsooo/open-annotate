@@ -121,7 +121,7 @@ annotate-tui herdr terminal --lines 20 --deliver-to w1:p2
 annotate-tui herdr terminal --lines 5 --print
 ```
 
-- `open`, `last` and `terminal` accept `--placement overlay|split|popup`. The default is `overlay`.
+- `open`, `last` and `terminal` accept `--placement overlay|split|tab|zoomed`. The default is `overlay`.
 - `last` opens a reply picker; add `--newest` to open the newest reply directly. With `--deliver-to`, it reads that pane's agent session.
 - `terminal` reviews recent output from the calling pane, even if feedback goes to a different pane. `--print` writes a fenced Markdown block to stdout instead of opening a reviewer.
 - Replace `w1:p2` with the receiving agent's pane ID. **Send** submits the feedback as a prompt, including Enter. If Herdr reports the agent is blocked at a dialog, no prompt is sent. Annotate keeps the notes pending and tries to copy the feedback to the terminal clipboard; resolve the dialog and retry when ready.
