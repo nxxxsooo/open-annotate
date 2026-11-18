@@ -37,6 +37,7 @@ const USAGE: &str = "usage:
   annotate-tui herdr last [--placement P] [--deliver-to <pane>] [--newest]
   annotate-tui herdr terminal [--lines N] [--placement P] [--deliver-to <pane>] [--print]
   annotate-tui herdr pane
+  annotate-tui herdr hosted-pane
   annotate-tui last [--host claude|codex|pi|omp|copilot|droid|hermes|opencode] [--pid N] [--session <transcript>]
                        [--session-id <id>] [--stdin] [--print] [--pick N] [--newest]";
 
@@ -183,6 +184,9 @@ fn herdr_command(args: &[String]) -> Result<()> {
     if sub == Some("pane") {
         return herdr_pane();
     }
+    if sub == Some("hosted-pane") {
+        return hosted_pane();
+    }
     if sub == Some("terminal") {
         return herdr_terminal(args.get(1..).unwrap_or_default());
     }
@@ -326,6 +330,31 @@ fn last_command(args: &[String]) -> Result<()> {
         }
     }
     crate::last::run(&options)
+}
+
+/// The parent owns delivery. Completion is published only after restoring the terminal.
+fn hosted_pane() -> Result<()> {
+    let directory = std::env::var_os("ANNOTATE_AGY_REVIEW_DIR")
+        .map(PathBuf::from)
+        .filter(|directory| directory.is_absolute())
+        .context("missing absolute hosted review directory")?;
+    let result = (|| {
+        let env = HerdrEnv::from_env();
+        let source =
+            std::env::var("ANNOTATE_AGY_SOURCE_PANE").context("missing hosted review source pane")?;
+        let focused = env.context.as_ref().and_then(|context| context.focused_pane_id.as_deref());
+        anyhow::ensure!(
+            env.in_herdr && !source.is_empty() && focused == Some(source.as_str()),
+            "Herdr focus changed before the popup opened. Open Annotate again from the AGY pane."
+        );
+        let snapshot = env.file.filter(|file| file.parent() == Some(directory.as_path()));
+        interactive(&snapshot.context("missing hosted review snapshot")?)
+    })();
+    let status = result.as_ref().map_or_else(|err| format!("{err:#}"), |()| "closed".to_owned());
+    let pending = directory.join("done.tmp");
+    std::fs::write(&pending, status).context("write hosted review completion")?;
+    std::fs::rename(pending, directory.join("done")).context("publish hosted review completion")?;
+    result
 }
 
 fn interactive(path: &PathBuf) -> Result<()> {

@@ -87,7 +87,7 @@ title = "Annotate AGY"
 placement = "popup"
 width = "90%"
 height = "90%"
-command = ["/absolute/path/to/agy-annotate", "tui-pane"]
+command = ["/absolute/path/to/annotate-tui", "herdr", "hosted-pane"]
 
 [[actions]]
 id = "review"

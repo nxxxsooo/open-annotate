@@ -68,6 +68,7 @@ test("extractAgyReplies extracts completed and in-progress replies, handling tru
   const latest = latestCompletedReply(replies)
   assert.ok(latest)
   assert.equal(latest.id, "2")
+  assert.deepEqual(await extractAgyReplies(root, { latestOnly: true }), [latest])
 })
 
 test("extractAgyReplies returns empty array when transcript does not exist", async () => {

@@ -35,7 +35,7 @@ export async function readFullStep(brainDir, stepIndex) {
   return null
 }
 
-export async function extractAgyReplies(brainDir, { signal } = {}) {
+export async function extractAgyReplies(brainDir, { signal, latestOnly = false } = {}) {
   const logPath = path.join(brainDir, ".system_generated/logs/transcript.jsonl")
   let text
   try {
@@ -54,6 +54,8 @@ export async function extractAgyReplies(brainDir, { signal } = {}) {
     if (!step) continue
     if (step.source !== "MODEL" || step.type !== "PLANNER_RESPONSE" || step.status !== "DONE") continue
 
+    const hasToolCalls = Array.isArray(step.tool_calls) && step.tool_calls.length > 0
+    if (latestOnly && hasToolCalls) continue
     let content = step.content || ""
     if (step.truncated_fields && step.truncated_fields.includes("content")) {
       const full = await readFullStep(brainDir, step.step_index)
@@ -61,8 +63,8 @@ export async function extractAgyReplies(brainDir, { signal } = {}) {
     }
 
     const cleaned = cleanModelContent(content)
-    const hasToolCalls = Array.isArray(step.tool_calls) && step.tool_calls.length > 0
     if (!cleaned && hasToolCalls) continue
+    if (latestOnly && !cleaned) continue
 
     replies.push({
       id: String(step.step_index),
@@ -71,6 +73,7 @@ export async function extractAgyReplies(brainDir, { signal } = {}) {
       created: Date.parse(step.created_at) || Date.now(),
       toolCalls: step.tool_calls?.map(t => t.name) || [],
     })
+    if (latestOnly) break
   }
 
   return replies

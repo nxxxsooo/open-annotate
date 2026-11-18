@@ -8,12 +8,8 @@ import os from "node:os"
 import { fileURLToPath } from "node:url"
 import { randomUUID, createHash } from "node:crypto"
 import { findSessionForDirectory, getActiveAgySessions } from "./session.mjs"
-import { extractAgyReplies, latestCompletedReply, defaultBrainDir } from "./transcript.mjs"
-import { enqueueAnnotations, listPendingBatches, defaultInboxRoot } from "./inbox.mjs"
-import { startAgyDaemon } from "./daemon.mjs"
-import { listTargets, registryRoot } from "../bridge/receiver.mjs"
-import { browserTarget } from "../targets.mjs"
-import { openInBrowser } from "../scripts/browser-target.mjs"
+import { extractAgyReplies, defaultBrainDir } from "./transcript.mjs"
+import { enqueueAnnotations, listPendingBatches } from "./inbox.mjs"
 import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
 import { resolveTuiBinary } from "../tui/binary.mjs"
@@ -73,6 +69,7 @@ async function resolveSession(targetId) {
 }
 
 async function cmdStatus() {
+  const { listTargets } = await import("../bridge/receiver.mjs")
   const sessions = getActiveAgySessions()
   const targets = await listTargets()
 
@@ -95,6 +92,7 @@ async function cmdStatus() {
 }
 
 async function cmdWeb(targetArg, options) {
+  const { listTargets } = await import("../bridge/receiver.mjs")
   const session = await resolveSession(options.session)
   const targets = await listTargets()
   let paired = targets.find(t => t.sessionID === session.conversationId)
@@ -123,10 +121,12 @@ async function cmdWeb(targetArg, options) {
   console.log(`  Open the "Annotate" extension and choose this session (Safari copies notes locally).`)
 
   if (targetArg && targetArg.trim()) {
+    const { browserTarget } = await import("../targets.mjs")
     const target = await browserTarget(targetArg, session.directory)
     if (target?.url) {
       console.log(`  Opening target: ${target.url}`)
       if (process.platform === "darwin") {
+        const { openInBrowser } = await import("../scripts/browser-target.mjs")
         await openInBrowser(target.url, options)
       }
     }
@@ -315,8 +315,7 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
     snapshotName = path.basename(resolvedPath)
     sourceHash = createHash("sha256").update(Buffer.from(sourceText)).digest("hex")
   } else {
-    const replies = await extractAgyReplies(defaultBrainDir(session.conversationId))
-    const latest = latestCompletedReply(replies)
+    const [latest] = await extractAgyReplies(defaultBrainDir(session.conversationId), { latestOnly: true })
     if (!latest || !latest.text.trim()) {
       throw new Error(`No completed assistant replies found in session "${session.title}".`)
     }
@@ -337,7 +336,14 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
   let complete = false
 
   try {
-    const themed = await prepareTheme({ binary, theme: getAdaptedThemeTokens(), directory: tempDir, env: process.env })
+    // Keep ASCII active before the first usable frame. Run the switch alongside
+    // theme setup, but wait for it even if the theme fails so it can be restored.
+    const [themedResult] = await Promise.allSettled([
+      prepareTheme({ binary, theme: getAdaptedThemeTokens(), directory: tempDir, env: process.env }),
+      inputSource.ascii().then(previous => { textSource = previous }),
+    ])
+    if (themedResult.status === "rejected") throw themedResult.reason
+    const themed = themedResult.value
     const env = {
       PLANNOTATOR_DATA_DIR: dataDir,
       PLANNOTATOR_FEEDBACK_HISTORY: "0",
@@ -346,8 +352,6 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
     }
     if (themed.PLANNOTATOR_TUI_CONFIG) env.PLANNOTATOR_TUI_CONFIG = themed.PLANNOTATOR_TUI_CONFIG
 
-    // Browse in ASCII so an input method cannot swallow review keys.
-    textSource = await inputSource.ascii()
     if (inputSource.command && textSource) {
       env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
       env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
@@ -360,9 +364,16 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
       let herdrPane
       if (captured) {
         const { bin } = captured
+        const popupEnv = {
+          ...env,
+          PLANNOTATOR_TUI_FILE: snapshotFile,
+          ANNOTATE_AGY_REVIEW_DIR: tempDir,
+          ANNOTATE_AGY_SOURCE_PANE: captured.pane,
+        }
         const result = await herdrCommand(bin, [
           "plugin", "pane", "open", "--plugin", process.env.HERDR_PLUGIN_ID || "annotate",
-          "--entrypoint", "agy-popup", "--env", `ANNOTATE_AGY_REVIEW_DIR=${tempDir}`,
+          "--entrypoint", "agy-popup", "--cwd", tempDir,
+          ...Object.entries(popupEnv).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
         ])
         if (result?.type !== "ok") throw new Error("The agy-popup entrypoint must declare placement = \"popup\".")
       } else if (opener.kind === "herdr") herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
