@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn, execFile } from "node:child_process"
 import { promisify } from "node:util"
-import { mkdtemp, mkdir, rm, readFile, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, rename, rm, readFile, writeFile } from "node:fs/promises"
+import { setTimeout as wait } from "node:timers/promises"
 import path from "node:path"
 import os from "node:os"
 import { fileURLToPath } from "node:url"
@@ -148,72 +149,128 @@ async function cmdQueue(options) {
   }
 }
 
-async function cmdTui(targetPath, options) {
-  const session = await resolveSession(options.session)
-  const binary = resolveTuiBinary(options.binary)
-  const brainDir = defaultBrainDir(session.conversationId)
-  const calledByAgent = Boolean(process.env.ANTIGRAVITY_AGENT || process.env.AGENT_TOOL_CALL)
-  const isInteractiveTTY = Boolean(options.interactiveTty) || (!calledByAgent && Boolean(process.stdin.isTTY) && !options.spawnWindow)
-
-  if (!isInteractiveTTY) {
-    const launcherScript = path.join(os.tmpdir(), `agy-annotate-launch-${Date.now()}.sh`)
-    const doneMarker = path.join(os.tmpdir(), `agy-annotate-done-${Date.now()}.txt`)
-    const cliScript = path.resolve(new URL(import.meta.url).pathname)
-    const tuiArgs = [cliScript, "tui", "--interactive-tty", "--session", session.conversationId]
-    if (targetPath) tuiArgs.push(targetPath)
-    if (options.binary) tuiArgs.push("--binary", options.binary)
-
-    const escapedTitle = (session.title || "Review").replace(/'/g, "'\\''")
-    const shellCmd = `printf '\\033]0;Annotate: %s\\007' '${escapedTitle}'\n${process.execPath} ${tuiArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}; echo done > '${doneMarker}'`
-    await writeFile(launcherScript, `#!/bin/sh\n${shellCmd}\n`, { mode: 0o755 })
-
-    const beforeBatches = await listPendingBatches(session.conversationId)
-
-    let launched = false
-    try {
-      const windowTitle = `Annotate: ${session.title}`
-      await execute("open", ["-na", "Ghostty", "--args", "--window-width=172", "--window-height=48", `--title=${windowTitle}`, "-e", launcherScript])
-      launched = true
-    } catch {
-      try {
-        await execute("osascript", ["-e", `tell application "Terminal" to do script "${launcherScript}"`, "-e", 'tell application "Terminal" to activate'])
-        launched = true
-      } catch (err) {
-        throw new Error(`Failed to spawn interactive review window: ${err.message}`)
-      }
+export async function selectTuiOpener({ env, tty, exec = execute }) {
+  if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID) {
+    const bin = env.HERDR_BIN_PATH || "herdr"
+    const response = await exec(bin, ["pane", "get", env.HERDR_PANE_ID], { env, timeout: 2000 }).catch(() => null)
+    if (response) {
+      const { result } = JSON.parse(response.stdout)
+      if (result?.pane?.pane_id && result.pane.tab_id) return { kind: "herdr", bin, pane: result.pane }
     }
-
-    console.log(`Opened interactive Annotate TUI window for "${session.title}".`)
-    console.log("Waiting for user to complete annotations (press 'q' or Ctrl+S to finish)...")
-
-    for (let i = 0; i < 300; i++) {
-      await new Promise(r => setTimeout(r, 1000))
-      const currentBatches = await listPendingBatches(session.conversationId)
-      if (currentBatches.length > beforeBatches.length) {
-        const newest = currentBatches[currentBatches.length - 1]
-        console.log(`\n✓ Annotations received from review window:\n\n${newest.markdown}`)
-        try { await rm(launcherScript, { force: true }); await rm(doneMarker, { force: true }) } catch {}
-        return
-      }
-      try {
-        await readFile(doneMarker)
-        await new Promise(r => setTimeout(r, 500))
-        const finalBatches = await listPendingBatches(session.conversationId)
-        if (finalBatches.length > beforeBatches.length) {
-          const newest = finalBatches[finalBatches.length - 1]
-          console.log(`\n✓ Annotations received from review window:\n\n${newest.markdown}`)
-        } else {
-          console.log("Interactive review window closed without annotations.")
-        }
-        try { await rm(launcherScript, { force: true }); await rm(doneMarker, { force: true }) } catch {}
-        return
-      } catch {
-        // Still waiting
-      }
-    }
-    return
   }
+  const calledByAgent = Boolean(env.ANTIGRAVITY_CONVERSATION_ID || env.ANTIGRAVITY_AGENT || env.AGENT_TOOL_CALL)
+  return { kind: tty && !calledByAgent ? "tty" : "window" }
+}
 
+async function openTuiWindow(directory, title) {
+  const launcher = path.join(directory, "launch.sh")
+  const quote = value => `'${value.replaceAll("'", "'\\''")}'`
+  const windowTitle = `Annotate: ${title}`.replace(/[\x00-\x1f\x7f-\x9f]/g, "")
+  const command = [process.execPath, fileURLToPath(import.meta.url), "tui-pane", directory].map(quote).join(" ")
+  await writeFile(launcher, `#!/bin/sh\nprintf '\\033]0;%s\\007' ${quote(windowTitle)}\nexec ${command}\n`, { mode: 0o700 })
+  try {
+    await execute("open", ["-na", "Ghostty", "--args", "--window-width=172", "--window-height=48", `--title=${windowTitle}`, "-e", launcher])
+  } catch {
+    try {
+      await execute("osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(quote(launcher))}`, "-e", 'tell application "Terminal" to activate'])
+    } catch (err) {
+      throw new Error(`Failed to spawn interactive review window: ${err.message}`)
+    }
+  }
+}
+
+async function openHerdrTui({ bin, pane }, directory) {
+  // Herdr overlays belong to the active pane; --target-pane is split-only.
+  if (!pane.focused) throw new Error("Focus the AGY pane in Herdr and retry /annotate.")
+  try {
+    const { stdout } = await execute(bin, [
+      "plugin", "pane", "open", "--plugin", "annotate", "--entrypoint", "agy",
+      "--placement", "overlay",
+      "--focus", "--cwd", directory, "--env", `ANNOTATE_AGY_REVIEW_DIR=${directory}`,
+    ], { timeout: 5000 })
+    const opened = JSON.parse(stdout).result?.plugin_pane?.pane
+    if (!opened?.pane_id) throw new Error("Herdr did not return the opened pane ID.")
+    if (opened.tab_id !== pane.tab_id) {
+      await execute(bin, ["pane", "close", opened.pane_id], { timeout: 2000 })
+      throw new Error("Herdr placed the overlay outside the AGY tab. Focus the AGY tab and try again.")
+    }
+    return opened.pane_id
+  } catch (err) {
+    throw new Error(`Failed to open the Herdr review overlay. Check that the annotate plugin has the agy pane entrypoint.\n${err.message}`)
+  }
+}
+
+function runReviewer({ binary, snapshotFile, env }, directory) {
+  const child = spawn(binary, [snapshotFile], {
+    cwd: directory,
+    env: { ...process.env, ...env },
+    stdio: "inherit",
+  })
+  return new Promise((resolve, reject) => {
+    child.on("exit", (code, signal) => {
+      if (code === 0) resolve()
+      else reject(new Error(`Reviewer exited with ${signal || code}.`))
+    })
+    child.on("error", reject)
+  })
+}
+
+async function runTuiPane(directory) {
+  if (!directory || !path.isAbsolute(directory)) throw new Error("Missing AGY review directory.")
+  let result = "closed"
+  try {
+    const request = JSON.parse(await readFile(path.join(directory, "request.json"), "utf8"))
+    await runReviewer(request, directory)
+  } catch (err) {
+    result = err.message
+  }
+  await writeFile(path.join(directory, "done.tmp"), result, { mode: 0o600 })
+  await rename(path.join(directory, "done.tmp"), path.join(directory, "done"))
+}
+
+async function readOptional(file) {
+  return readFile(file, "utf8").catch(err => {
+    if (err.code !== "ENOENT") throw err
+    return null
+  })
+}
+
+async function waitForTuiPane(directory, herdrPane) {
+  const deadline = Date.now() + 300_000
+  while (Date.now() < deadline) {
+    const result = await readOptional(path.join(directory, "done"))
+    if (result === "closed") return true
+    if (result !== null) throw new Error(result)
+    if (herdrPane) {
+      const { bin, id } = herdrPane
+      const missing = await execute(bin, ["pane", "get", id], { timeout: 2000 }).then(() => false, err => {
+        try { return JSON.parse(err.stderr).error?.code === "pane_not_found" } catch { return false }
+      })
+      if (missing && await readOptional(path.join(directory, "done")) === null) return false
+    }
+    await wait(500)
+  }
+  throw new Error("Timed out waiting for Annotate.")
+}
+
+// The hook is the only feedback channel. Neither the pane nor the waiting tool
+// returns the Markdown, and no other pending batch can finish this review.
+export async function finishTuiReview({ intentPath, conversationId, header, exportFeedback, enqueue = enqueueAnnotations }) {
+  if (await readOptional(intentPath) !== "send\n") return "Review closed without sending annotations."
+  const feedback = (await exportFeedback()).trim()
+  if (!feedback || feedback === "No annotations.") return "No annotations to send."
+  await enqueue(conversationId, {
+    batchID: `tui-${randomUUID()}`,
+    markdown: `${header}\n\n${feedback}`,
+    promptID: `msg_${randomUUID()}`,
+  })
+  return "Annotations queued for this AGY conversation. The lifecycle hook will deliver them."
+}
+
+async function cmdTui(targetPath, options) {
+  const session = await resolveSession(options.session || process.env.ANTIGRAVITY_CONVERSATION_ID)
+  const binary = path.resolve(resolveTuiBinary(options.binary))
+  const opener = await selectTuiOpener({ env: process.env, tty: process.stdin.isTTY })
   let sourceText = ""
   let snapshotName = "last-reply.md"
   let filePath = null
@@ -226,7 +283,7 @@ async function cmdTui(targetPath, options) {
     snapshotName = path.basename(resolvedPath)
     sourceHash = createHash("sha256").update(Buffer.from(sourceText)).digest("hex")
   } else {
-    const replies = await extractAgyReplies(brainDir)
+    const replies = await extractAgyReplies(defaultBrainDir(session.conversationId))
     const latest = latestCompletedReply(replies)
     if (!latest || !latest.text.trim()) {
       throw new Error(`No completed assistant replies found in session "${session.title}".`)
@@ -243,67 +300,62 @@ async function cmdTui(targetPath, options) {
   await mkdir(dataDir, { recursive: true, mode: 0o700 })
   await writeFile(snapshotFile, sourceText, { mode: 0o600 })
 
-  let env = {
-    ...process.env,
-    PLANNOTATOR_DATA_DIR: dataDir,
-    PLANNOTATOR_FEEDBACK_HISTORY: "0",
-    PLANNOTATOR_TUI_SEND_INTENT: intentPath,
-  }
-
-  env = await prepareTheme({ binary, theme: getAdaptedThemeTokens(), directory: tempDir, env })
-
-  // Browse in ASCII so an input method cannot swallow review keys; see input-source.mjs.
   const inputSource = createInputSource()
-  const textSource = await inputSource.ascii()
-  if (inputSource.command && textSource) {
-    env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
-    env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
-  }
+  let textSource
+  let complete = false
 
   try {
-    // Run the bundled reviewer interactively.
-    const child = spawn(binary, [snapshotFile], {
-      cwd: tempDir,
-      env,
-      stdio: "inherit",
-    })
+    const themed = await prepareTheme({ binary, theme: getAdaptedThemeTokens(), directory: tempDir, env: process.env })
+    const env = {
+      PLANNOTATOR_DATA_DIR: dataDir,
+      PLANNOTATOR_FEEDBACK_HISTORY: "0",
+      PLANNOTATOR_TUI_SEND_INTENT: intentPath,
+      PLANNOTATOR_TUI_EXPLICIT_SEND: "1",
+    }
+    if (themed.PLANNOTATOR_TUI_CONFIG) env.PLANNOTATOR_TUI_CONFIG = themed.PLANNOTATOR_TUI_CONFIG
 
-    await new Promise((resolve, reject) => {
-      child.on("exit", (code, signal) => {
-        if (signal) reject(new Error(`TUI killed by signal ${signal}`))
-        else resolve(code)
-      })
-      child.on("error", reject)
-    }).finally(() => inputSource.select(textSource))
-
-    // Export annotations
-    const { stdout } = await execute(binary, ["--export", snapshotFile], {
-      cwd: tempDir,
-      env,
-      timeout: 15000,
-    })
-    const feedback = stdout.trim()
-
-    if (!feedback || feedback === "No annotations.") {
-      console.log("No annotations created. Returned to terminal.")
-      return
+    // Browse in ASCII so an input method cannot swallow review keys.
+    textSource = await inputSource.ascii()
+    if (inputSource.command && textSource) {
+      env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
+      env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
+    }
+    const request = { binary, snapshotFile, env }
+    if (opener.kind === "tty") {
+      await runReviewer(request, tempDir)
+    } else {
+      await writeFile(path.join(tempDir, "request.json"), JSON.stringify(request), { mode: 0o600 })
+      let herdrPane
+      if (opener.kind === "herdr") herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
+      else await openTuiWindow(tempDir, session.title)
+      console.log(`Opened Annotate ${opener.kind === "herdr" ? "overlay" : "window"}. Waiting for Send or quit…`)
+      if (!await waitForTuiPane(tempDir, herdrPane)) {
+        console.log(`Review pane closed without sending. Review files retained at ${tempDir}`)
+        return
+      }
     }
 
-    const header = filePath
-      ? `Annotations on document \`${filePath}\` (SHA-256: ${sourceHash}):`
-      : `Annotations on latest assistant response in session "${session.title}":`
-    const combined = `${header}\n\n${feedback}`
-
-    await enqueueAnnotations(session.conversationId, {
-      batchID: `tui-${Date.now()}`,
-      markdown: combined,
-      promptID: `msg_${randomUUID()}`,
+    const status = await finishTuiReview({
+      intentPath,
+      conversationId: session.conversationId,
+      header: filePath
+        ? `Annotations on document \`${filePath}\` (SHA-256: ${sourceHash}):`
+        : `Annotations on latest assistant response in session "${session.title}":`,
+      exportFeedback: async () => {
+        const { stdout } = await execute(binary, ["--export", snapshotFile], {
+          cwd: tempDir, env: { ...process.env, ...env }, timeout: 15000,
+        })
+        await writeFile(path.join(tempDir, "feedback.md"), stdout, { mode: 0o600 })
+        return stdout
+      },
     })
-
-    console.log(`\n✓ Enqueued annotations for AGY session: "${session.title}"`)
-    console.log(`  The next AGY turn or invocation will ingest this feedback.`)
+    complete = true
+    console.log(status)
+  } catch (err) {
+    throw new Error(`${err.message} Review files retained at ${tempDir}`, { cause: err })
   } finally {
-    await rm(tempDir, { recursive: true, force: true })
+    await inputSource.select(textSource)
+    if (complete) await rm(tempDir, { recursive: true, force: true })
   }
 }
 
@@ -315,6 +367,10 @@ async function main() {
   }
 
   const command = args[0]
+  if (command === "tui-pane") {
+    await runTuiPane(args[1] || process.env.ANNOTATE_AGY_REVIEW_DIR)
+    return
+  }
   const options = {}
   let posArg = null
 
@@ -323,8 +379,6 @@ async function main() {
       options.session = args[++i]
     } else if (args[i] === "--binary") {
       options.binary = args[++i]
-    } else if (args[i] === "--interactive-tty") {
-      options.interactiveTty = true
     } else if (args[i] === "--browser") {
       options.browser = args[++i]
     } else if (!args[i].startsWith("-") && !posArg) {

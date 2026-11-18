@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, rm, writeFile, chmod } from "node:fs/promises"
+import { mkdir, readdir, readFile, rename, rm, writeFile, chmod } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
 import path from "node:path"
 import os from "node:os"
 
@@ -20,7 +21,13 @@ export async function enqueueAnnotations(conversationId, payload, inboxRoot = de
     review: payload.review,
   }
 
-  await writeFile(file, JSON.stringify(record, null, 2), { mode: 0o600 })
+  const draft = path.join(sessionInbox, `.${randomUUID()}.tmp`)
+  try {
+    await writeFile(draft, JSON.stringify(record, null, 2), { mode: 0o600 })
+    await rename(draft, file)
+  } finally {
+    await rm(draft, { force: true })
+  }
   return { file, batchID }
 }
 
@@ -55,18 +62,25 @@ export async function dequeueAnnotations(conversationId, inboxRoot = defaultInbo
   const batchIDs = []
 
   for (const batch of batches) {
-    if (batch.markdown) markdowns.push(batch.markdown)
-    batchIDs.push(batch.batchID)
+    const claim = `${batch.filePath}.${randomUUID()}.claim`
     try {
-      await rm(batch.filePath, { force: true })
-    } catch {
-      // Ignore cleanup error
+      // Read from the claimed path, never the listing: concurrent hooks
+      // cannot both read the moved batch from their unique claim paths.
+      await rename(batch.filePath, claim)
+      const claimed = JSON.parse(await readFile(claim, "utf8"))
+      if (claimed.markdown) markdowns.push(claimed.markdown)
+      batchIDs.push(claimed.batchID)
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err
+    } finally {
+      await rm(claim, { force: true })
     }
   }
 
+  if (!batchIDs.length) return null
   return {
     batchIDs,
     combinedMarkdown: markdowns.join("\n\n---\n\n"),
-    count: batches.length,
+    count: batchIDs.length,
   }
 }

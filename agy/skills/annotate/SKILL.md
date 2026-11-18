@@ -14,7 +14,7 @@ Run the command:
 ```bash
 npx --yes --package @nxxxsooo/opencode-annotate@latest agy-annotate tui
 ```
-This opens the bundled reviewer in an interactive window (via Ghostty or Terminal). When the user finishes adding annotations and presses `q` (or `Ctrl+S`), the window closes, the command outputs the feedback, and you proceed to apply the requested changes.
+This opens the bundled reviewer in a Herdr overlay when available, or in Ghostty/Terminal otherwise. Keep the command running until the user finishes. **Send** (`Ctrl+S`) queues the notes for delivery by the AGY lifecycle hook; `q` or `Ctrl+C` closes without sending. The command returns status only. Wait for the delivered annotations before acting on them.
 
 ### 2. When the user specifies a document (e.g., `/annotate path/to/doc.md`):
 Run the command:

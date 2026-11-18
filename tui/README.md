@@ -73,6 +73,13 @@ id = "doc"
 title = "Annotate"
 placement = "overlay"
 command = ["/absolute/path/to/annotate-tui", "herdr", "pane"]
+
+# Optional: AGY /annotate overlay. Install agy-annotate and use its absolute path.
+[[panes]]
+id = "agy"
+title = "Annotate AGY"
+placement = "overlay"
+command = ["/absolute/path/to/agy-annotate", "tui-pane"]
 ```
 
 `herdr pane` is the plugin entrypoint: it reads the file, reply or terminal source
@@ -83,6 +90,10 @@ one of the supported values. Agent delivery uses `herdr agent prompt`; a blocked
 leaves notes pending for a manual retry and attempts an OSC 52 clipboard copy.
 OpenCode's `/annotate` clears the inherited `HERDR_*` variables before launching
 the reviewer, so it does not use this route.
+
+AGY uses the separate `agy` entrypoint to display a private Markdown snapshot.
+Keep the AGY pane focused while the overlay opens. It sends via the AGY
+lifecycle hooks, not `herdr agent prompt`.
 
 Runtime checks used fixture panes and a local transcript. Real model turns and
 OS clipboard integration were not tested.

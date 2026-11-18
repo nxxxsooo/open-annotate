@@ -237,6 +237,7 @@ pub(crate) struct App {
     pub(crate) clipboard: bool,
     /// Where a host waits to hear that the notes should be sent; see `host`.
     pub(crate) send_intent: Option<PathBuf>,
+    pub(crate) explicit_host_send: bool,
     /// Switches the system input source with the comment box; see `input_source`.
     pub(crate) input_source: Option<input_source::InputSource>,
     pub(crate) quit: bool,
@@ -310,6 +311,7 @@ impl App {
             frame_max_ms: 0.0,
             clipboard: false,
             send_intent: None,
+            explicit_host_send: false,
             input_source: None,
             quit: false,
         })

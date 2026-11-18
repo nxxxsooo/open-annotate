@@ -95,6 +95,18 @@ fn quit_with_notes_hands_them_back_and_without_notes_just_quits() {
 }
 
 #[test]
+fn explicit_host_send_keeps_quit_separate_even_with_notes() {
+    let (root, mut app, _delivery) = file_app("host-explicit");
+    let intent = hosted(&mut app, &root);
+    app.explicit_host_send = true;
+    app.add_block_annotation(0, Kind::Comment, "x".to_owned()).expect("annotation");
+    assert!(footer(&mut app).contains("E send · q quit"));
+    press(&mut app, 'q');
+    assert!(app.quit && !intent.exists());
+    assert_eq!(app.send_count(), 1, "quit did not deliver the note");
+}
+
+#[test]
 fn interrupt_leaves_without_sending_or_asking() {
     let (root, mut app, _delivery) = file_app("host-interrupt");
     let intent = hosted(&mut app, &root);

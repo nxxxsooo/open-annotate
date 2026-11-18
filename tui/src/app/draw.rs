@@ -562,12 +562,14 @@ impl App {
         );
         let tab = bare(self.keys.hint(Action::CycleFocus));
         // `send-and-close` is bound only in a reply review, so only a reply review names it.
-        // A hosted review with notes sends them on the way out, so `quit` names the send.
+        // A hosted review can let `quit` send, unless the host requires explicit Send.
         let hosted = self.is_hosted();
         let send = if hosted { None } else { key(Action::Send, "send") };
         let send_and_close =
             if self.is_file_review() || hosted { None } else { key(Action::SendAndClose, "send+quit") };
-        let leave = if hosted && self.send_count() > 0 {
+        let leave = if hosted && self.explicit_host_send {
+            [key(Action::Send, "send"), key(Action::Quit, "quit")]
+        } else if hosted && self.send_count() > 0 {
             [key(Action::Quit, "send"), key(Action::Interrupt, "leave")]
         } else {
             [key(Action::Quit, "quit"), None]

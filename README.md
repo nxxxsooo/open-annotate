@@ -154,8 +154,9 @@ documents and webpages.
 `opencode-annotate` provides companion support for Google Antigravity CLI (`agy`) via `agy-annotate`:
 
 - **Slash command `/annotate`**: Built-in AGY skill at `agy/skills/annotate/` handles text and explicit URL/HTML review within active AGY sessions.
-- **Interactive TUI**: Uses the same bundled reviewer as OpenCode, with Dracula theme inheritance and one-key send.
-- **Native Delivery**: Hooks into AGY lifecycle (`SessionStart`, `PreInvocation`, `Stop`) to deliver feedback directly into the conversation turn without network listeners.
+- **Interactive TUI**: Uses the same bundled reviewer as OpenCode, with a Dracula palette. In Herdr 0.9.5, add the `agy` pane to the [local `annotate` plugin manifest](tui/README.md#herdr) to open `/annotate` over the AGY tab. Outside Herdr, the skill opens Ghostty or Terminal as before.
+- **Send or quit**: `Ctrl+S` (or the Send button) submits to the originating AGY conversation. `q` and `Ctrl+C` close without submitting.
+- **Native Delivery**: Configure AGY lifecycle hooks (`SessionStart`, `PreInvocation`, `Stop`) using `agy/hooks.mjs` from the same package as `agy-annotate`. Only the hooks deliver feedback; the review command returns status.
 - **CLI Commands**:
   ```sh
   npx --package @nxxxsooo/opencode-annotate@latest agy-annotate status
