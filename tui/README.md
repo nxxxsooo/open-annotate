@@ -80,13 +80,47 @@ id = "agy"
 title = "Annotate AGY"
 placement = "overlay"
 command = ["/absolute/path/to/agy-annotate", "tui-pane"]
+
+[[panes]]
+id = "agy-popup"
+title = "Annotate AGY"
+placement = "popup"
+width = "90%"
+height = "90%"
+command = ["/absolute/path/to/agy-annotate", "tui-pane"]
+
+[[actions]]
+id = "review"
+title = "Annotate latest reply"
+contexts = ["pane"]
+command = ["/absolute/path/to/agy-annotate", "herdr-review", "--binary", "/absolute/path/to/annotate-tui"]
 ```
+
+Add this to Herdr's `config.toml` and reload the server configuration:
+
+```toml
+[[keys.command]]
+key = "prefix+a"
+type = "plugin_action"
+command = "annotate.review"
+description = "Annotate latest reply"
+```
+
+Press your prefix (default `Ctrl+B`) then `a` in the agent pane. The AGY action
+opens a 90% × 90% modal using the pane manifest's `popup` placement. Herdr 0.9.5
+does not accept `popup` as a `--placement` CLI override. Send rechecks the AGY
+conversation before starting a turn in an idle/done pane or queuing to the AGY
+hooks while Herdr reports it is working. A blocked, unknown, or changed
+destination keeps the notes and shows the recovery path. The AGY `/annotate` skill still opens the `agy`
+overlay via a model tool call.
 
 `herdr pane` is the plugin entrypoint: it reads the file, reply or terminal source
 passed by the launcher. Set `--placement overlay|split|tab|zoomed` on `herdr open`,
-`herdr last` or `herdr terminal`; the default is `overlay`. Remove any old
-`popup_width` and `popup_height` settings and replace `placement = "popup"` with
-one of the supported values. Agent delivery uses `herdr agent prompt`; a blocked send
+`herdr last` or `herdr terminal`; the default is `overlay`. If your Annotate
+`tui.toml` uses `popup_width` or `popup_height`, remove those settings and
+replace its `placement = "popup"` with a supported value. This does not
+affect `placement = "popup"` in the Herdr plugin manifest above.
+Agent delivery uses `herdr agent prompt`; a blocked send
 leaves notes pending for a manual retry and attempts an OSC 52 clipboard copy.
 OpenCode's `/annotate` clears the inherited `HERDR_*` variables before launching
 the reviewer, so it does not use this route.
@@ -95,8 +129,6 @@ AGY uses the separate `agy` entrypoint to display a private Markdown snapshot.
 Keep the AGY pane focused while the overlay opens. It sends via the AGY
 lifecycle hooks, not `herdr agent prompt`.
 
-Runtime checks used fixture panes and a local transcript. Real model turns and
-OS clipboard integration were not tested.
 
 ## Local image-toolbar trial
 

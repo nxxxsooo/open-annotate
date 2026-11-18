@@ -17,6 +17,7 @@ import { openInBrowser } from "../scripts/browser-target.mjs"
 import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
 import { resolveTuiBinary } from "../tui/binary.mjs"
+import { captureHerdrConversation, deliverHerdrReview, focusedPane, herdrCommand, readHerdrAgent } from "./herdr.mjs"
 
 const execute = promisify(execFile)
 
@@ -220,6 +221,9 @@ async function runTuiPane(directory) {
   let result = "closed"
   try {
     const request = JSON.parse(await readFile(path.join(directory, "request.json"), "utf8"))
+    if (request.sourcePane && focusedPane(process.env) !== request.sourcePane) {
+      throw new Error("Herdr focus changed before the popup opened. Open Annotate again from the AGY pane.")
+    }
     await runReviewer(request, directory)
   } catch (err) {
     result = err.message
@@ -255,15 +259,17 @@ async function waitForTuiPane(directory, herdrPane) {
 
 // The hook is the only feedback channel. Neither the pane nor the waiting tool
 // returns the Markdown, and no other pending batch can finish this review.
-export async function finishTuiReview({ intentPath, conversationId, header, exportFeedback, enqueue = enqueueAnnotations }) {
+export async function finishTuiReview({ intentPath, conversationId, header, exportFeedback, enqueue = enqueueAnnotations, deliver }) {
   if (await readOptional(intentPath) !== "send\n") return "Review closed without sending annotations."
   const feedback = (await exportFeedback()).trim()
   if (!feedback || feedback === "No annotations.") return "No annotations to send."
-  await enqueue(conversationId, {
+  const batch = {
     batchID: `tui-${randomUUID()}`,
     markdown: `${header}\n\n${feedback}`,
     promptID: `msg_${randomUUID()}`,
-  })
+  }
+  if (deliver) return deliver(batch)
+  await enqueue(conversationId, batch)
   return "Annotations queued for this AGY conversation. The lifecycle hook will deliver them."
 }
 
@@ -271,6 +277,32 @@ async function cmdTui(targetPath, options) {
   const session = await resolveSession(options.session || process.env.ANTIGRAVITY_CONVERSATION_ID)
   const binary = path.resolve(resolveTuiBinary(options.binary))
   const opener = await selectTuiOpener({ env: process.env, tty: process.stdin.isTTY })
+  await reviewTui(targetPath, { session, binary, opener })
+}
+
+async function cmdHerdrReview(options) {
+  const bin = process.env.HERDR_BIN_PATH || "herdr"
+  const binary = path.resolve(resolveTuiBinary(options.binary))
+  try {
+    const pane = focusedPane(process.env)
+    const agent = await readHerdrAgent(bin, pane)
+    if (["claude", "codex", "pi", "opencode"].includes(agent.agent)) {
+      const { stdout } = await execute(binary, ["herdr", "last", "--newest", "--deliver-to", pane], { timeout: 5000 })
+      console.log(stdout.trim())
+      return
+    }
+    if (agent.agent !== "agy") throw new Error("This action supports AGY, Claude, Codex, Pi, and OpenCode panes.")
+    const captured = { ...await captureHerdrConversation(bin, pane, agent), bin, pane, terminalId: agent.terminal_id }
+    const session = { conversationId: captured.conversationId, title: `AGY ${captured.conversationId.slice(0, 8)}` }
+    const status = await reviewTui(null, { session, binary, opener: { kind: "popup" }, captured })
+    if (status) await herdrCommand(bin, ["notification", "show", "Annotate", "--body", status]).catch(() => {})
+  } catch (err) {
+    await herdrCommand(bin, ["notification", "show", "Annotate", "--body", err.message]).catch(() => {})
+    throw err
+  }
+}
+
+async function reviewTui(targetPath, { session, binary, opener, captured }) {
   let sourceText = ""
   let snapshotName = "last-reply.md"
   let filePath = null
@@ -320,15 +352,22 @@ async function cmdTui(targetPath, options) {
       env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
       env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
     }
-    const request = { binary, snapshotFile, env }
+    const request = { binary, snapshotFile, env, sourcePane: captured?.pane }
     if (opener.kind === "tty") {
       await runReviewer(request, tempDir)
     } else {
       await writeFile(path.join(tempDir, "request.json"), JSON.stringify(request), { mode: 0o600 })
       let herdrPane
-      if (opener.kind === "herdr") herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
+      if (captured) {
+        const { bin } = captured
+        const result = await herdrCommand(bin, [
+          "plugin", "pane", "open", "--plugin", process.env.HERDR_PLUGIN_ID || "annotate",
+          "--entrypoint", "agy-popup", "--env", `ANNOTATE_AGY_REVIEW_DIR=${tempDir}`,
+        ])
+        if (result?.type !== "ok") throw new Error("The agy-popup entrypoint must declare placement = \"popup\".")
+      } else if (opener.kind === "herdr") herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
       else await openTuiWindow(tempDir, session.title)
-      console.log(`Opened Annotate ${opener.kind === "herdr" ? "overlay" : "window"}. Waiting for Send or quit…`)
+      console.log(`Opened Annotate ${opener.kind === "herdr" ? "overlay" : opener.kind}. Waiting for Send or quit…`)
       if (!await waitForTuiPane(tempDir, herdrPane)) {
         console.log(`Review pane closed without sending. Review files retained at ${tempDir}`)
         return
@@ -338,6 +377,7 @@ async function cmdTui(targetPath, options) {
     const status = await finishTuiReview({
       intentPath,
       conversationId: session.conversationId,
+      deliver: captured && (batch => deliverHerdrReview(captured, batch)),
       header: filePath
         ? `Annotations on document \`${filePath}\` (SHA-256: ${sourceHash}):`
         : `Annotations on latest assistant response in session "${session.title}":`,
@@ -351,6 +391,7 @@ async function cmdTui(targetPath, options) {
     })
     complete = true
     console.log(status)
+    return status
   } catch (err) {
     throw new Error(`${err.message} Review files retained at ${tempDir}`, { cause: err })
   } finally {
@@ -395,6 +436,9 @@ async function main() {
       break
     case "tui":
       await cmdTui(posArg, options)
+      break
+    case "herdr-review":
+      await cmdHerdrReview(options)
       break
     case "queue":
       await cmdQueue(options)

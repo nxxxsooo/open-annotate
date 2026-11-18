@@ -114,6 +114,13 @@ Numbered `/annotate N`, `/annotate-last` and `/annotate-web` are retired. Use `/
 
 ## Herdr
 
+Bind **prefix, then `a`** (`Ctrl+B`, then `a` by default) to
+`annotate.review` using the [manifest and keybinding setup](tui/README.md#herdr).
+In AGY this opens a floating Markdown reviewer without starting a model turn.
+Send starts a turn if AGY is idle or done, or queues feedback if it is working.
+Quit sends nothing. Claude, Codex, Pi, and OpenCode use the existing `herdr last`
+route. AGY's `/annotate` skill remains available, but invokes the model first.
+
 Run the bundled `annotate-tui` directly from a Herdr pane. Herdr needs an enabled
 `annotate` plugin with a `doc` pane entrypoint; see the [TUI setup](tui/README.md#herdr).
 OpenCode's `/annotate` keeps its own session delivery, even when OpenCode runs in Herdr.
