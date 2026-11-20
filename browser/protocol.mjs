@@ -1,7 +1,22 @@
 export const MAX_BYTES = 512 * 1024
 export const HOST = "fun.mjshao.annotate"
 // Bump when panel ↔ worker actions change. Chrome can keep an older worker running beside a newer panel.
-export const PROTOCOL = 8
+export const PROTOCOL = 10
+const finiteFields = (value, keys) => value && keys.every(key => Number.isFinite(value[key]))
+export function validateAnchor(anchor) {
+  if (typeof anchor?.quote !== "string" || anchor.quote.length > 4000 ||
+      !["text", "element", "area"].includes(anchor.type) ||
+      (anchor.type !== "area" && typeof anchor.selector !== "string")) throw new Error("Invalid annotation anchor")
+  for (const key of ["prefix", "suffix", "styles", "accessibility", "element", "fullPath", "frame"]) {
+    if (anchor[key] !== undefined && typeof anchor[key] !== "string") throw new Error("Invalid anchor field")
+  }
+  if (anchor.type === "area" && (
+    !finiteFields(anchor.rect, ["x", "y", "width", "height"]) || anchor.rect.width <= 0 || anchor.rect.height <= 0 ||
+    !finiteFields(anchor.viewport, ["width", "height", "scrollX", "scrollY"]) || anchor.viewport.width <= 0 || anchor.viewport.height <= 0 ||
+    !Array.isArray(anchor.selectors) || anchor.selectors.length > 5 ||
+    Array.from(anchor.selectors).some(value => typeof value !== "string" || !value.trim() || value.length > 1000)
+  )) throw new Error("Invalid area anchor")
+}
 export function safeUrl(input) {
   const url = new URL(input)
   if (!["http:", "https:", "file:"].includes(url.protocol)) throw new Error("Unsupported page URL")
@@ -20,12 +35,8 @@ export function validateReview(review) {
     if (!note || typeof note.page?.title !== "string" || pageTitle(note.page.title) !== note.page.title ||
         typeof note.page?.url !== "string" || safeUrl(note.page.url) !== note.page.url ||
         typeof note.id !== "string" || ids.has(note.id) || !Number.isSafeInteger(note.revision) || note.revision < 1 ||
-        !["comment", "ask"].includes(note.kind) || typeof note.comment !== "string" || !note.comment.trim() || note.comment.length > 8000 ||
-        typeof note.anchor?.quote !== "string" || note.anchor.quote.length > 4000 || typeof note.anchor.selector !== "string" ||
-        !["text", "element"].includes(note.anchor.type)) throw new Error("Invalid annotation")
-    for (const key of ["prefix", "suffix", "styles", "accessibility", "element", "fullPath", "frame"]) {
-      if (note.anchor[key] !== undefined && typeof note.anchor[key] !== "string") throw new Error("Invalid anchor field")
-    }
+        !["comment", "ask"].includes(note.kind) || typeof note.comment !== "string" || !note.comment.trim() || note.comment.length > 8000) throw new Error("Invalid annotation")
+    validateAnchor(note.anchor)
     if (typeof note.createdAt !== "string" || Number.isNaN(Date.parse(note.createdAt))) throw new Error("Invalid annotation timestamp")
     ids.add(note.id)
   }
@@ -41,6 +52,9 @@ export function orderedNotes(notes) {
   }
   return [...groups.values()].flat()
 }
+export function areaLabel({ rect: { x, y, width, height } }) {
+  return `Area (${x},${y} ${width}×${height})`
+}
 export function markdown(review) {
   validateReview(review)
   const lines = ["# Web annotations", "",
@@ -52,7 +66,12 @@ export function markdown(review) {
       lines.push(`## ${note.page.title}`, `URL: ${pageURL}`, "")
     }
     const a = note.anchor
-    lines.push(`### Annotation ${index + 1} (${note.kind})`, `Captured: ${note.createdAt}`, `Selector hint: ${a.selector}`, `Element: ${a.element || a.type}`, "", "Page evidence:")
+    lines.push(`### Annotation ${index + 1} (${note.kind})`, `Captured: ${note.createdAt}`)
+    if (a.type === "area") {
+      lines.push(`${areaLabel(a)} on ${note.page.title}`)
+      if (a.selectors.length) lines.push("Selector hints:", ...a.selectors.map(selector => `- ${selector}`))
+    } else lines.push(`Selector hint: ${a.selector}`, `Element: ${a.element || a.type}`)
+    lines.push("", "Page evidence:")
     lines.push(...`${a.prefix || ""}【${a.quote}】${a.suffix || ""}`.split("\n").map(line => `> ${line}`))
     if (a.fullPath) lines.push(`DOM path: ${a.fullPath}`)
     if (a.frame) lines.push(`Frame: ${a.frame}`)

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.18.0 — Select page areas
+
+- Choose **Select area** in the browser panel and drag a rectangle. Feedback
+  includes page coordinates, visible text and element selectors when available.
+  No screenshot is captured.
+- Unsent areas keep their numbered outlines when you scroll, reload or return
+  to the page. Select an outline to move or resize it and refresh its evidence
+  without changing the note number.
+- Reload the Chrome extension and restart OpenCode after updating for browser
+  protocol 10.
+
 ## 0.17.1 — picking inside modal drawers
 
 - Keep element highlights, saved-note markers and reveal outlines visible above

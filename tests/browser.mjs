@@ -7,6 +7,7 @@ import assert from "node:assert/strict"
 import { installBridge } from "../scripts/install-bridge.mjs"
 import { createReceiver } from "../bridge/receiver.mjs"
 import { createWebReview } from "../web-review.mjs"
+import { PROTOCOL, validateReview } from "../browser/protocol.mjs"
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || pathToFileURL(path.join(os.homedir(), ".agents/node_modules/playwright-core/index.mjs")).href)
 
@@ -51,7 +52,7 @@ try {
   await modalPage.evaluate(() => {
     window.captures = []
     window.chrome = { runtime: {
-      sendMessage: async message => { window.captures.push(message) },
+      sendMessage: async message => { window.captures.push(message); return { ok: true } },
       onMessage: { addListener: listener => { window.captureMessage = listener }, removeListener() {} },
     } }
     const attach = Element.prototype.attachShadow
@@ -65,7 +66,7 @@ try {
   await modalPage.addScriptTag({ path: path.join(project, "browser/inspector.js") })
   await modalPage.addScriptTag({ path: path.join(project, "browser/capture.js") })
   const modalMessage = message => modalPage.evaluate(message => new Promise(resolve => window.captureMessage(message, {}, resolve)), message)
-  await modalMessage({ action: "pick", picking: true })
+  await modalMessage({ action: "pick", mode: "element" })
   await modalPage.locator("#inside").hover()
   assert.equal(await modalPage.evaluate(() => {
     const host = document.querySelector("[data-opencode-annotate]")
@@ -91,7 +92,7 @@ try {
   assert.notDeepEqual(await modalPage.screenshot({ clip }), paintedHover, "hover border is actually painted above the modal")
   await modalPage.locator("#inside").click()
   assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#inside")
-  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).picking), false)
+  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).mode), null)
   const insideAnchor = await modalPage.evaluate(() => window.captures.at(-1).anchor)
   await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }] })
   assert.equal(await modalPage.evaluate(() => window.overlayRoot.querySelector(".pin").textContent), "1")
@@ -121,7 +122,7 @@ try {
   // Opening another modal after injection must raise the overlay again. This
   // nested modal also supplies a transformed ancestor that reparenting breaks.
   await modalPage.evaluate(() => document.querySelector("#nested").showModal())
-  await modalMessage({ action: "pick", picking: true })
+  await modalMessage({ action: "pick", mode: "element" })
   await modalPage.locator("#inner").hover()
   await alignedOverlay("#inner")
   const innerRect = await modalPage.locator("#inner").boundingBox()
@@ -131,8 +132,42 @@ try {
   assert.notDeepEqual(await modalPage.screenshot({ clip: innerClip }), paintedNested, "overlay is painted above a modal opened after injection")
   await modalPage.locator("#inner").click()
   assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#inner")
+  const dragArea = async (x, y, width, height, inspect) => {
+    await modalPage.mouse.move(x, y)
+    await modalPage.mouse.down()
+    await modalPage.mouse.move(x + width, y + height, { steps: 4 })
+    if (inspect) await inspect()
+    await modalPage.mouse.up()
+  }
+  const x = innerClip.x + 5, y = innerClip.y + 5
+  const areaClip = { x, y, width: 12, height: 12 }
+  await modalMessage({ action: "pick", mode: "area" })
+  await dragArea(x, y, 170, 60, async () => {
+    const painted = await modalPage.screenshot({ clip: areaClip })
+    await modalPage.evaluate(() => { window.overlayRoot.querySelector(".box.area").style.visibility = "hidden" })
+    assert.notDeepEqual(await modalPage.screenshot({ clip: areaClip }), painted, "area drag is painted over the nested modal")
+  })
+  await modalPage.waitForFunction(() => window.captures.at(-1)?.anchor?.type === "area")
+  const modalArea = await modalPage.evaluate(() => window.captures.at(-1).anchor)
+  assert.equal(modalArea.quote, "Nested target")
+  assert.deepEqual(modalArea.selectors, ["#inner"])
+  assert.deepEqual(modalArea.rect, { x, y, width: 170, height: 60 })
+  const modalNote = { id: "modal-area", anchor: modalArea, revision: 1, number: 2 }
+  await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }, modalNote] })
+  const paintedArea = await modalPage.screenshot({ clip: areaClip })
+  await modalPage.evaluate(() => { window.overlayRoot.querySelector(".area-mark").style.visibility = "hidden" })
+  assert.notDeepEqual(await modalPage.screenshot({ clip: areaClip }), paintedArea, "saved area marker is painted over the nested modal")
+  await modalPage.evaluate(() => { window.overlayRoot.querySelector(".area-mark").style.visibility = "" })
+  await modalPage.mouse.click(x + 65, y)
+  await modalPage.waitForFunction(() => window.captures.at(-1)?.action === "area-focus")
+  await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }, modalNote], focus: modalNote.id })
+  await dragArea(x + 70, y + 30, 11, 7)
+  const adjustedArea = await modalPage.evaluate(() => window.captures.findLast(message => message.action === "area-adjust"))
+  assert.equal(adjustedArea.id, modalNote.id)
+  assert.deepEqual(adjustedArea.anchor.rect, { x: x + 11, y: y + 7, width: 170, height: 60 })
+  await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }] })
   await modalPage.evaluate(() => document.querySelector("#nested").close())
-  await modalMessage({ action: "pick", picking: true })
+  await modalMessage({ action: "pick", mode: "element" })
   await modalPage.locator("#inside").hover()
   await modalPage.locator("#inside").click()
   assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#inside")
@@ -144,7 +179,7 @@ try {
     document.dispatchEvent(new Event("pointerup"))
   })
   assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.type), "text")
-  await modalMessage({ action: "pick", picking: true })
+  await modalMessage({ action: "pick", mode: "element" })
   await modalPage.locator("input").click()
   assert.ok(!(await modalPage.evaluate(() => JSON.stringify(window.captures.at(-1).anchor))).includes("never-export"))
   await modalPage.evaluate(() => {
@@ -152,7 +187,7 @@ try {
     document.querySelector("#pane").showModal()
     document.querySelector("#pane").remove()
   })
-  await modalMessage({ action: "pick", picking: true })
+  await modalMessage({ action: "pick", mode: "element" })
   await modalPage.locator("#outside").hover()
   await alignedOverlay("#outside")
   await modalPage.locator("#outside").click()
@@ -161,6 +196,7 @@ try {
   assert.equal(await modalPage.locator("[data-opencode-annotate]").count(), 0)
   await modalPage.close()
   passed.push("Modal hover, pins, reveal and capture survive transformed/nested dialogs, open/close/removal and disposal")
+  passed.push("Area drags and saved markers paint above nested modal drawers and remain clickable and adjustable")
   const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker")
   await worker.evaluate(async () => {
     const deadline = Date.now() + 5000
@@ -885,9 +921,13 @@ try {
   await existingPage.waitForLoadState()
   const originalTabID = (await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))).tabID
   await panel.evaluate(id => chrome.tabs.update(id, { active: true }), existingPageTab.id)
+  // On an ungranted tab, the page title still shows the previous page. Its old
+  // note buttons must not act on a null state before this tab is connected.
+  await panel.locator("#page-error").filter({ hasText: "Click the extension icon on this page to grant access" }).waitFor()
+  assert.equal(await panel.getByRole("button", { name: "Edit note 2", exact: true }).isDisabled(), true)
   const existingTargets = await cdp.send("Target.getTargets", { filter: [{ type: "tab", exclude: false }, { exclude: true }] })
   await cdp.send("Extensions.triggerAction", { id: installation.extensionID, targetId: existingTargets.targetInfos.find(tab => tab.url === `${url}/second`).targetId })
-  await panel.waitForFunction(async id => !!(await chrome.storage.session.get(`tab:${id}`))[`tab:${id}`]?.page, existingPageTab.id)
+  await panel.waitForFunction(expected => document.querySelector("#page-url").title === expected, `${url}/second`)
   await panel.evaluate(id => chrome.tabs.update(id, { active: true }), originalTabID)
   await panel.waitForFunction(expected => document.querySelector("#page-url").title === expected, url)
   const tabCount = context.pages().length
@@ -1019,6 +1059,14 @@ try {
     return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => ({
       url: location.href, boxes: [...(globalThis.__testRoot?.querySelectorAll(".box") || [])].map(node => node.style.cssText),
       pins: [...(globalThis.__testRoot?.querySelectorAll(".pin") || [])].map(node => node.textContent),
+      areas: [...(globalThis.__testRoot?.querySelectorAll(".area-mark") || [])].map(node => {
+        const { x, y, width, height } = node.getBoundingClientRect()
+        const handles = Object.fromEntries([...node.querySelectorAll("[data-handle]")].map(handle => {
+          const box = handle.getBoundingClientRect()
+          return [handle.dataset.handle, [box.x + box.width / 2, box.y + box.height / 2]]
+        }))
+        return { id: node.dataset.markerId, x, y, width, height, handles, border: getComputedStyle(node).borderTopStyle, badge: node.querySelector(".pin")?.textContent }
+      }),
     }) })
   })
   const frameNoteIDs = []
@@ -1036,16 +1084,16 @@ try {
         } })
       })
       await rpc({ action: "current" })
-      const upgraded = await worker.evaluate(async () => {
+      const upgraded = await worker.evaluate(async version => {
         const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version === 8 })
-      })
+        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: version => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version === version, args: [version] })
+      }, PROTOCOL)
       assert.ok(upgraded.every(item => item.result))
       passed.push("Pre-frame page tools are replaced once; subsequent injections preserve the current inspector")
     }
     let inner = await page.locator(selector).contentFrame()
     if (depth === 2) inner = inner.locator("#child").contentFrame()
-    await rpc({ action: "pick" })
+    await rpc({ action: "pick", mode: "element" })
     await inner.locator("#inside").hover()
     const visuals = await frameVisuals()
     const innerBoxes = visuals.filter(item => item.result.url.includes("/frames/inner")).flatMap(item => item.result.boxes)
@@ -1056,7 +1104,7 @@ try {
     let captured = await rpc({ action: "current" })
     assert.equal(captured.page.url, fixtureURL)
     assert.equal(JSON.parse(captured.anchor.frame).selectors.length, depth)
-    assert.equal(captured.picking, false)
+    assert.equal(captured.mode, null)
     if (fixture === "iframe") {
       await panel.getByLabel("Your feedback").fill("Keep this frame draft")
       await panel.locator("#draft-state").filter({ hasText: "Draft saved locally" }).waitFor()
@@ -1089,13 +1137,13 @@ try {
     passed.push(`${fixture}: inner hover, element/text notes, top-page ownership, reload-safe reveal and globally numbered frame markers`)
   }
   // A late-loading/navigating child inherits the active picker without a new grant.
-  await rpc({ action: "pick" })
+  await rpc({ action: "pick", mode: "element" })
   await page.locator("#outer").evaluate(node => { node.src = "/frames/inner?late" })
   const late = page.frameLocator("#outer").locator("#inside")
   await late.waitFor(); await late.hover()
-  await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).picking)
+  await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).mode === "element")
   await late.press("Escape")
-  await panel.waitForFunction(async () => !(await chrome.runtime.sendMessage({ action: "current" })).picking)
+  await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).mode === null)
   assert.deepEqual((await rpc({ action: "current" })).anchorStates.slice(-2), ["missing frame", "missing frame"])
   const navigatedReveal = await rpc({ action: "reveal", noteID: frameNoteIDs.at(-1) })
   assert.equal(navigatedReveal.ok, false)
@@ -1104,18 +1152,18 @@ try {
   await page.locator("#outer").evaluate(node => { node.srcdoc = '<p id="blank-child">Inherited origin text</p>' })
   const inherited = page.frameLocator("#outer").locator("#blank-child")
   await inherited.waitFor()
-  await rpc({ action: "pick" })
+  await rpc({ action: "pick", mode: "element" })
   await inherited.click()
   await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).anchor?.selector === "#blank-child")
   assert.equal(JSON.parse((await rpc({ action: "current" })).anchor.frame).url, "about:srcdoc")
   passed.push("Inherited-origin srcdoc frames remain accessible and retain a stable frame locator")
   await page.goto(new URL("/frames/foreign", url).href); await activate(); await instrumentFrames()
-  await rpc({ action: "pick" })
+  await rpc({ action: "pick", mode: "element" })
   await page.locator("#foreign").hover({ position: { x: 1, y: 1 } })
   await panel.waitForFunction(async () => (await chrome.runtime.sendMessage({ action: "current" })).error === "This frame is from another site; Annotate can't read it")
   await panel.locator("#page-error").filter({ hasText: "This frame is from another site; Annotate can't read it" }).waitFor()
   assert.ok((await frameVisuals()).filter(item => item.frameId === 0).every(item => item.result.boxes.length === 0))
-  await rpc({ action: "pick" })
+  await rpc({ action: "pick", mode: null })
   passed.push("An inaccessible cross-origin frame shows a specific explanation instead of a whole-frame highlight")
   const frameDeliveries = []
   const frameReceiver = await createReceiver({ root: targetsDirectory, sessionID: "ses_frames", title: "Frame tests", directory: "/isolated-test", resume: false,
@@ -1134,6 +1182,148 @@ try {
   await panel.waitForFunction(() => !!window.frameCopy)
   assert.equal(((await panel.evaluate(() => window.frameCopy)).match(/^Frame: /gm) || []).length, 6)
   passed.push("Native Send and Copy Markdown both preserve all frame locator lines across a multi-page round")
+  await page.goto(url); await page.bringToFront(); await activate(); await instrumentFrames()
+  await page.evaluate(() => {
+    document.body.style.minHeight = "3600px"
+    document.body.insertAdjacentHTML("beforeend", `<div id="area-fixture" style="position:absolute;left:100px;top:1300px">
+      <span id="area-text">Visible area text</span><span hidden>never-export-area-hidden</span>
+      <span contenteditable>never-export-area-editor</span>
+      <span style="position:absolute;top:100px">outside-area-text</span>
+    </div><span id="area-moved" style="position:absolute;left:100px;top:1400px">Moved area evidence</span>
+      <span id="area-expanded" style="position:absolute;left:520px;top:1400px">Expanded</span>
+      <button id="under-area" style="position:absolute;left:320px;top:1310px;width:60px;height:26px" aria-label="Underlying control"
+        onclick="window.areaPageClicks=(window.areaPageClicks||0)+1"></button>
+      <span id="area-second" style="position:absolute;left:100px;top:1550px">Second area evidence</span>`)
+    scrollTo(0, 1200)
+  })
+  await panel.locator("#page-title").filter({ hasText: "Annotate review fixture" }).waitFor()
+  const beforeArea = await rpc({ action: "current" })
+  await panel.locator("#pick").click()
+  await panel.locator('#pick[aria-pressed="true"]').waitFor()
+  await panel.getByRole("button", { name: "Select area", exact: true }).click()
+  await panel.locator('#area[aria-pressed="true"]').waitFor()
+  assert.equal(await panel.locator("#pick").getAttribute("aria-pressed"), "false")
+  const dragStart = { x: 90, y: 90 }, dragEnd = { x: 500, y: 145 }
+  await page.mouse.click(dragStart.x, dragStart.y)
+  assert.equal((await rpc({ action: "current" })).captureID, beforeArea.captureID)
+  await page.mouse.move(dragStart.x, dragStart.y); await page.mouse.down(); await page.mouse.move(dragEnd.x, dragEnd.y)
+  assert.equal((await frameVisuals())[0].result.boxes.length, 1, "the drag shows a live rectangle")
+  await page.keyboard.press("Escape"); await page.mouse.up()
+  await panel.locator('#area[aria-pressed="false"]').waitFor()
+  assert.equal((await rpc({ action: "current" })).captureID, beforeArea.captureID)
+  assert.equal((await frameVisuals())[0].result.boxes.length, 0, "Escape removes drag visuals")
+  await panel.locator("#area").click()
+  await panel.locator('#area[aria-pressed="true"]').waitFor()
+  await page.mouse.move(dragEnd.x, dragEnd.y); await page.mouse.down(); await page.mouse.move(dragStart.x, dragStart.y); await page.mouse.up()
+  await panel.locator("#quote").filter({ hasText: "Visible area text" }).waitFor()
+  const { anchor, mode } = await rpc({ action: "current" })
+  assert.equal(mode, null)
+  assert.equal(anchor.type, "area")
+  assert.deepEqual(anchor.rect, { x: 90, y: 1290, width: 410, height: 55 })
+  assert.deepEqual(anchor.viewport, await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scrollX, scrollY })))
+  assert.equal(anchor.quote, "Visible area text")
+  assert.ok(anchor.selectors.includes("#area-text"))
+  await panel.getByLabel("Your feedback").fill("Review this rectangle")
+  await panel.getByRole("button", { name: "Add note", exact: true }).click()
+  await panel.locator("#notes .note").filter({ hasText: "Review this rectangle" }).waitFor()
+  const { notes } = await rpc({ action: "current" })
+  const areaNote = notes.find(note => note.anchor.type === "area")
+  const envelope = (anchor = areaNote.anchor) => ({ version: 2, annotations: [{ ...areaNote, anchor }] })
+  assert.deepEqual(validateReview(envelope()).annotations[0].anchor, anchor)
+  for (const fields of [{ rect: undefined }, { rect: { ...anchor.rect, width: 0 } }, { viewport: { ...anchor.viewport, scrollX: Infinity } },
+    { viewport: { ...anchor.viewport, height: -1 } }, { selectors: "#area-text" }, { selectors: [null] },
+    { selectors: Array(6).fill("#area-text") }, { quote: "x".repeat(4001) }]) {
+    assert.throws(() => validateReview(envelope({ ...anchor, ...fields })), /Invalid/)
+  }
+  const visuals = () => frameVisuals().then(frames => frames[0].result)
+  assert.deepEqual((await visuals()).pins, [String(notes.indexOf(areaNote) + 1)])
+  assert.match((await visuals()).boxes[0], /left: 90px; top: 90px/)
+  await page.evaluate(() => scrollTo(0, 1250))
+  // scrollTo returns before Chromium dispatches the scroll event.
+  await panel.waitForFunction(async id => {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+    const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [id], func: id => {
+      const rect = globalThis.__testRoot?.querySelector(`[data-marker-id="${CSS.escape(id)}"]`)?.getBoundingClientRect()
+      return scrollY === 1250 && rect?.x === 90 && rect.y === 40
+    } })
+    return result
+  }, areaNote.id, { polling: 25, timeout: 3000 })
+  await page.setViewportSize({ width: 1160, height: 900 })
+  assert.match((await visuals()).boxes[0], /left: 90px; top: 40px/)
+  const areaMarks = async () => (await visuals()).areas
+  const findArea = async id => (await areaMarks()).find(mark => mark.id === id)
+  const dragMouse = async (start, end, cancel = false) => {
+    await page.mouse.move(...start); await page.mouse.down(); await page.mouse.move(...end)
+    if (cancel) await page.keyboard.press("Escape")
+    await page.mouse.up()
+  }
+  await panel.locator("#area").click()
+  await panel.locator('#area[aria-pressed="true"]').waitFor()
+  await dragMouse([90, 290], [420, 342])
+  await panel.locator("#quote").filter({ hasText: "Second area evidence" }).waitFor()
+  const draft = await areaMarks()
+  assert.equal(draft.length, 2)
+  assert.equal(draft.find(mark => mark.id === areaNote.id).border, "dashed")
+  const activeDraft = draft.find(mark => mark.id.startsWith("draft:"))
+  assert.equal(activeDraft.border, "solid")
+  assert.equal(Object.keys(activeDraft.handles).length, 8)
+  await dragMouse([250, 330], [260, 330])
+  await panel.locator("#quote").filter({ hasText: "Area (100,1540 330×52)" }).waitFor()
+  assert.equal((await rpc({ action: "current" })).draft.value.anchor.rect.x, 100)
+  await panel.getByLabel("Your feedback").fill("Review a second rectangle")
+  await panel.getByRole("button", { name: "Add note", exact: true }).click()
+  await panel.locator("#notes .note").filter({ hasText: "Review a second rectangle" }).waitFor()
+  const second = (await rpc({ action: "current" })).notes.find(note => note.comment === "Review a second rectangle")
+  assert.equal((await areaMarks()).length, 2)
+  await page.mouse.click(350, 73)
+  assert.equal(await page.evaluate(() => window.areaPageClicks), 1, "the inactive rectangle's interior passes through")
+  assert.equal((await findArea(areaNote.id)).border, "dashed")
+  await page.mouse.click(91, 40)
+  await panel.locator(`.note.is-current[data-note-id="${areaNote.id}"]`).waitFor()
+  assert.equal(await page.evaluate(() => window.areaPageClicks), 1)
+  assert.equal((await findArea(areaNote.id)).border, "solid")
+  assert.equal((await findArea(second.id)).border, "dashed")
+  await dragMouse([300, 75], [300, 175])
+  await panel.locator(`.note[data-note-id="${areaNote.id}"] .note-target`).filter({ hasText: "Moved area evidence" }).waitFor()
+  let first = (await rpc({ action: "current" })).notes.find(note => note.id === areaNote.id)
+  assert.equal(first.revision, areaNote.revision + 1)
+  assert.deepEqual(first.anchor.rect, { x: 90, y: 1390, width: 410, height: 55 })
+  assert.ok(first.anchor.selectors.includes("#area-moved"))
+  assert.ok(!first.anchor.selectors.includes("#area-text"))
+  const east = (await findArea(areaNote.id)).handles.e
+  await dragMouse(east, [east[0] + 100, east[1]])
+  await panel.locator(`.note[data-note-id="${areaNote.id}"] .note-target`).filter({ hasText: "Expanded" }).waitFor()
+  first = (await rpc({ action: "current" })).notes.find(note => note.id === areaNote.id)
+  assert.equal(first.revision, areaNote.revision + 2)
+  assert.equal(first.anchor.rect.width, 510)
+  assert.ok(first.anchor.selectors.includes("#area-expanded"))
+  assert.equal((await findArea(areaNote.id)).badge, String(notes.indexOf(areaNote) + 1))
+  await dragMouse([300, 175], [350, 225], true)
+  assert.equal((await findArea(areaNote.id)).x, 90, "Escape reverts the on-page move")
+  assert.deepEqual((await rpc({ action: "current" })).notes.find(note => note.id === areaNote.id), first)
+  await page.reload(); await instrumentFrames()
+  assert.equal((await areaMarks()).length, 2, "reload rebuilds both markers without a queue change")
+  assert.equal((await findArea(areaNote.id)).y, first.anchor.rect.y - await page.evaluate(() => scrollY))
+  await panel.locator(`.note[data-note-id="${second.id}"] button[aria-label^="Delete note"]`).click()
+  await panel.locator(`.note[data-note-id="${second.id}"]`).waitFor({ state: "detached" })
+  assert.equal(await findArea(second.id), undefined)
+  await panel.locator("#undo").click()
+  await panel.locator(`.note[data-note-id="${second.id}"]`).waitFor()
+  assert.ok(await findArea(second.id))
+  await panel.locator(`.page-group[title="${url}"] button`).click()
+  await panel.locator(`.note[data-note-id="${second.id}"]`).waitFor({ state: "detached" })
+  assert.equal((await areaMarks()).length, 0)
+  await panel.locator("#undo").click()
+  await panel.locator(`.note[data-note-id="${second.id}"]`).waitFor()
+  assert.equal((await areaMarks()).length, 2)
+  assert.equal((await rpc({ action: "send", targetID: frameReceiver.target.id })).ok, true)
+  assert.equal((await areaMarks()).length, 0)
+  assert.match(frameDeliveries.at(-1).text, /Area \(90,1390 510×55\) on Annotate review fixture/)
+  assert.match(frameDeliveries.at(-1).text, /^- #area-moved$/m)
+  assert.match(frameDeliveries.at(-1).text, /^> 【.*Moved area evidence.*Expanded.*】$/m)
+  passed.push("Area selection validates capture, excludes private text, and preserves inactive markers")
+  passed.push("Draft and queued area move/resize refresh evidence, preserve numbering, and revert on Escape")
+  passed.push("Area markers return on reload and Undo, disappear on delete/clear/send, and deliver adjusted geometry")
   await panel.evaluate(() => {
     const send = chrome.runtime.sendMessage.bind(chrome.runtime)
     chrome.runtime.sendMessage = async message => {

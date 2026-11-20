@@ -1,5 +1,17 @@
 # Releasing
 
+## 0.18.0 — Select page areas — 2026-11-20
+
+Prepared from `feat/browser-area-select` on top of 0.17.1. Mingjian dev-tested
+area selection and adjustable markers in Chrome on 2026-11-20, confirmed
+“没问题了” and chose to release 0.17.1 before 0.18.0. Unpublished hc work
+remains excluded.
+
+**Select area** captures page coordinates, visible text and element selectors
+without taking a screenshot. Unsent area markers stay visible and adjustable
+over the page and modal drawers. Reload the Chrome extension and restart
+OpenCode after updating for browser protocol 10.
+
 ## 0.17.1 — picking inside modal drawers — 2026-11-16
 
 Prepared from public `origin/main` (`bbc4282`) in an isolated release worktree.

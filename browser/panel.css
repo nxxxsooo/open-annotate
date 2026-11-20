@@ -37,9 +37,9 @@ textarea { caret-color: var(--accent); }
 #page-url { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 main { min-height: 0; min-width: 0; overflow: auto; padding: 14px 16px 20px; scrollbar-width: thin; scrollbar-color: var(--input) transparent; scroll-padding: 16px; }
 .picker-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-#pick { flex: none; }
+#pick, #area { flex: none; }
 #pick-hint { font-size: 13px; color: var(--muted); }
-#pick[aria-pressed="true"] { width: 100%; background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.picker-row button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .composer { margin-top: 18px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
 .section-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .section-heading h2 { font-size: 14px; font-weight: 650; }
