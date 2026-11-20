@@ -99,32 +99,24 @@ pub(crate) struct HerdrConfig {
     pub(crate) placement: Placement,
     /// Split only.
     pub(crate) split_direction: SplitDirection,
-    /// Popup only; cells or a percentage like `90%`.
-    pub(crate) popup_width: String,
-    pub(crate) popup_height: String,
 }
 
 impl Default for HerdrConfig {
     fn default() -> Self {
-        Self {
-            placement: Placement::Overlay,
-            split_direction: SplitDirection::Right,
-            popup_width: "90%".to_owned(),
-            popup_height: "85%".to_owned(),
-        }
+        Self { placement: Placement::Overlay, split_direction: SplitDirection::Right }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Placement {
-    /// A real pane zoomed over the whole tab; Herdr restores focus and zoom on exit.
+    /// Over the active tab.
     #[default]
     Overlay,
     /// Beside the target pane.
     Split,
-    /// A modal floating box.
-    Popup,
+    Tab,
+    Zoomed,
 }
 
 impl Placement {
@@ -132,7 +124,8 @@ impl Placement {
         match self {
             Self::Overlay => "overlay",
             Self::Split => "split",
-            Self::Popup => "popup",
+            Self::Tab => "tab",
+            Self::Zoomed => "zoomed",
         }
     }
 }
@@ -150,8 +143,9 @@ impl FromStr for Placement {
         match s {
             "overlay" => Ok(Self::Overlay),
             "split" => Ok(Self::Split),
-            "popup" => Ok(Self::Popup),
-            other => anyhow::bail!("unknown placement {other:?}; expected overlay, split or popup"),
+            "tab" => Ok(Self::Tab),
+            "zoomed" => Ok(Self::Zoomed),
+            other => anyhow::bail!("unknown placement {other:?}; expected overlay, split, tab or zoomed"),
         }
     }
 }
@@ -239,8 +233,11 @@ mod tests {
 
     #[test]
     fn invalid_placement_error_names_the_value() {
-        let err = Config::parse("[herdr]\nplacement = \"floating\"\n").expect_err("rejected");
-        assert!(err.to_string().contains("floating"), "{err}");
+        let err = Config::parse("[herdr]\nplacement = \"popup\"\n").expect_err("rejected");
+        let msg = err.to_string();
+        for value in ["popup", "overlay", "split", "tab", "zoomed"] {
+            assert!(msg.contains(value), "{err}");
+        }
     }
 
     #[test]
@@ -248,7 +245,6 @@ mod tests {
         let config = Config::parse("[herdr]\nplacement = \"split\"\n").expect("parses");
         assert_eq!(config.herdr.placement, Placement::Split);
         assert_eq!(config.herdr.split_direction, SplitDirection::Right);
-        assert_eq!(config.herdr.popup_width, "90%");
     }
 
     #[cfg(windows)]

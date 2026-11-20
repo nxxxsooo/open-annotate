@@ -107,6 +107,27 @@ Browser setup is separate from the plugin install. Safari supports local notes a
 
 Numbered `/annotate N`, `/annotate-last` and `/annotate-web` are retired. Use `/annotate-pick` for earlier text, `/annotate` for the latest reply, and `/annotate <url-or-html>` for a page. Browser connection controls live in the extension's destination menu.
 
+## Herdr
+
+Run the bundled `annotate-tui` directly from a Herdr pane. Herdr needs an enabled
+`annotate` plugin with a `doc` pane entrypoint; see the [TUI setup](tui/README.md#herdr).
+OpenCode's `/annotate` keeps its own session delivery, even when OpenCode runs in Herdr.
+
+```sh
+annotate-tui herdr open docs/plan.md --placement split --deliver-to w1:p2
+annotate-tui herdr open docs/ --deliver-to w1:p2
+annotate-tui herdr last --deliver-to w1:p2
+annotate-tui herdr terminal --lines 20 --deliver-to w1:p2
+annotate-tui herdr terminal --lines 5 --print
+```
+
+- `open`, `last` and `terminal` accept `--placement overlay|split|tab|zoomed`. The default is `overlay`.
+- `last` opens a reply picker; add `--newest` to open the newest reply directly. With `--deliver-to`, it reads that pane's agent session.
+- `terminal` reviews recent output from the calling pane, even if feedback goes to a different pane. `--print` writes a fenced Markdown block to stdout instead of opening a reviewer.
+- Replace `w1:p2` with the receiving agent's pane ID. **Send** submits the feedback as a prompt, including Enter. If Herdr reports the agent is blocked at a dialog, no prompt is sent. Annotate keeps the notes pending and tries to copy the feedback to the terminal clipboard; resolve the dialog and retry when ready.
+
+Outside Herdr, use `annotate-tui docs/plan.md` to copy feedback via a terminal that supports OSC 52. `herdr open` requires a Herdr pane.
+
 ## Upgrading from the TUI-only package
 
 `opencode-annotate` replaces `opencode-plannotator-tui` (0.4.2 and earlier). To switch, run `opencode plugin remove opencode-plannotator-tui@latest` and then install this package as shown above.

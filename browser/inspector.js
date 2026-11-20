@@ -130,10 +130,9 @@
   }
   const size = rect => (rect.right - rect.left) * (rect.bottom - rect.top)
   const contains = (outer, inner) => outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
-  function captureArea(rect) {
+  function captureArea(rect, container) {
     const viewport = { width: innerWidth, height: innerHeight, scrollX, scrollY }
     const region = intersection(new DOMRect(rect.x - scrollX, rect.y - scrollY, rect.width, rect.height), new DOMRect(0, 0, innerWidth, innerHeight))
-    const container = [...document.querySelectorAll("dialog:modal")].at(-1) || document.body
     if (!region || !container) return { type: "area", rect, viewport, quote: "", selectors: [] }
     const omitted = textFilter(), clips = new WeakMap(), range = document.createRange(), candidates = []
     function clip(element) {

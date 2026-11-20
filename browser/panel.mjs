@@ -140,7 +140,7 @@ function controls() {
   $("disconnect").hidden = !available
   $("disconnect").disabled = lock || !available
   $("copy").disabled = $("export").disabled = !state?.notes.length
-  for (const button of $("notes").querySelectorAll("button")) button.disabled = lock
+  for (const button of $("notes").querySelectorAll("button")) button.disabled = lock || !state
   for (const id of ["clear", "confirm-clear", "cancel-clear"]) $(id).disabled = lock || !state?.notes.length
   for (const id of busy) if ($(id)) $(id).disabled = true
   if (outdated) for (const button of document.querySelectorAll("button:not(#reload-extension)")) button.disabled = true

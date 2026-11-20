@@ -52,7 +52,7 @@ try {
   await modalPage.evaluate(() => {
     window.captures = []
     window.chrome = { runtime: {
-      sendMessage: async message => { window.captures.push(message) },
+      sendMessage: async message => { window.captures.push(message); return { ok: true } },
       onMessage: { addListener: listener => { window.captureMessage = listener }, removeListener() {} },
     } }
     const attach = Element.prototype.attachShadow
@@ -132,6 +132,40 @@ try {
   assert.notDeepEqual(await modalPage.screenshot({ clip: innerClip }), paintedNested, "overlay is painted above a modal opened after injection")
   await modalPage.locator("#inner").click()
   assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#inner")
+  const dragArea = async (x, y, width, height, inspect) => {
+    await modalPage.mouse.move(x, y)
+    await modalPage.mouse.down()
+    await modalPage.mouse.move(x + width, y + height, { steps: 4 })
+    if (inspect) await inspect()
+    await modalPage.mouse.up()
+  }
+  const x = innerClip.x + 5, y = innerClip.y + 5
+  const areaClip = { x, y, width: 12, height: 12 }
+  await modalMessage({ action: "pick", mode: "area" })
+  await dragArea(x, y, 170, 60, async () => {
+    const painted = await modalPage.screenshot({ clip: areaClip })
+    await modalPage.evaluate(() => { window.overlayRoot.querySelector(".box.area").style.visibility = "hidden" })
+    assert.notDeepEqual(await modalPage.screenshot({ clip: areaClip }), painted, "area drag is painted over the nested modal")
+  })
+  await modalPage.waitForFunction(() => window.captures.at(-1)?.anchor?.type === "area")
+  const modalArea = await modalPage.evaluate(() => window.captures.at(-1).anchor)
+  assert.equal(modalArea.quote, "Nested target")
+  assert.deepEqual(modalArea.selectors, ["#inner"])
+  assert.deepEqual(modalArea.rect, { x, y, width: 170, height: 60 })
+  const modalNote = { id: "modal-area", anchor: modalArea, revision: 1, number: 2 }
+  await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }, modalNote] })
+  const paintedArea = await modalPage.screenshot({ clip: areaClip })
+  await modalPage.evaluate(() => { window.overlayRoot.querySelector(".area-mark").style.visibility = "hidden" })
+  assert.notDeepEqual(await modalPage.screenshot({ clip: areaClip }), paintedArea, "saved area marker is painted over the nested modal")
+  await modalPage.evaluate(() => { window.overlayRoot.querySelector(".area-mark").style.visibility = "" })
+  await modalPage.mouse.click(x + 65, y)
+  await modalPage.waitForFunction(() => window.captures.at(-1)?.action === "area-focus")
+  await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }, modalNote], focus: modalNote.id })
+  await dragArea(x + 70, y + 30, 11, 7)
+  const adjustedArea = await modalPage.evaluate(() => window.captures.findLast(message => message.action === "area-adjust"))
+  assert.equal(adjustedArea.id, modalNote.id)
+  assert.deepEqual(adjustedArea.anchor.rect, { x: x + 11, y: y + 7, width: 170, height: 60 })
+  await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }] })
   await modalPage.evaluate(() => document.querySelector("#nested").close())
   await modalMessage({ action: "pick", mode: "element" })
   await modalPage.locator("#inside").hover()
@@ -162,6 +196,7 @@ try {
   assert.equal(await modalPage.locator("[data-opencode-annotate]").count(), 0)
   await modalPage.close()
   passed.push("Modal hover, pins, reveal and capture survive transformed/nested dialogs, open/close/removal and disposal")
+  passed.push("Area drags and saved markers paint above nested modal drawers and remain clickable and adjustable")
   const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker")
   await worker.evaluate(async () => {
     const deadline = Date.now() + 5000
@@ -886,9 +921,13 @@ try {
   await existingPage.waitForLoadState()
   const originalTabID = (await panel.evaluate(() => chrome.runtime.sendMessage({ action: "current" }))).tabID
   await panel.evaluate(id => chrome.tabs.update(id, { active: true }), existingPageTab.id)
+  // On an ungranted tab, the page title still shows the previous page. Its old
+  // note buttons must not act on a null state before this tab is connected.
+  await panel.locator("#page-error").filter({ hasText: "Click the extension icon on this page to grant access" }).waitFor()
+  assert.equal(await panel.getByRole("button", { name: "Edit note 2", exact: true }).isDisabled(), true)
   const existingTargets = await cdp.send("Target.getTargets", { filter: [{ type: "tab", exclude: false }, { exclude: true }] })
   await cdp.send("Extensions.triggerAction", { id: installation.extensionID, targetId: existingTargets.targetInfos.find(tab => tab.url === `${url}/second`).targetId })
-  await panel.waitForFunction(async id => !!(await chrome.storage.session.get(`tab:${id}`))[`tab:${id}`]?.page, existingPageTab.id)
+  await panel.waitForFunction(expected => document.querySelector("#page-url").title === expected, `${url}/second`)
   await panel.evaluate(id => chrome.tabs.update(id, { active: true }), originalTabID)
   await panel.waitForFunction(expected => document.querySelector("#page-url").title === expected, url)
   const tabCount = context.pages().length

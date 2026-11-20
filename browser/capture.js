@@ -7,8 +7,8 @@
   const on = (target, event, handler, options = {}) => target.addEventListener(event, handler, { ...options, signal: listeners.signal })
   const host = document.createElement("div")
   host.setAttribute("data-opencode-annotate", "")
-  // A manual popover puts the pointer-transparent viewport overlay in the top
-  // layer without moving it under transformed/clipping dialog ancestors.
+  host.setAttribute("aria-hidden", "true")
+  // A manual popover keeps viewport coordinates even under a transformed dialog.
   host.setAttribute("popover", "manual")
   host.style.cssText = "all:initial!important;position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important"
   const root = host.attachShadow({ mode: "closed" })
@@ -41,9 +41,16 @@
   let modals = []
   function syncLayer(force = false) {
     const next = [...document.querySelectorAll("dialog:modal")]
-    const changed = force || next.length !== modals.length || next.some((node, index) => node !== modals[index])
-    if (changed) box.remove()
+    // Hit testing through the backdrop finds the top modal even when another
+    // modal follows it in DOM order. The active modal's subtree is the only
+    // place where top-layer area controls can receive pointer events.
+    const modal = next.length > 1 ? document.elementFromPoint(0, 0)?.closest("dialog:modal") || next.at(-1) : next[0]
+    const parent = modal || document.documentElement
+    const move = host.parentElement !== parent
+    const changed = move || force || next.length !== modals.length || next.some((node, index) => node !== modals[index])
+    if (changed && mode === "element") box.remove()
     if (changed && host.matches(":popover-open")) host.hidePopover()
+    if (move) parent.append(host)
     if (!host.matches(":popover-open")) host.showPopover()
     modals = next
   }
@@ -105,7 +112,7 @@
       if (!completed) return
       const rect = completed; completed = null
       setMode(null, false)
-      try { send(AnnotateInspector.captureArea(rect)) } catch (error) { send(null, error.message) }
+      try { send(captureArea(rect)) } catch (error) { send(null, error.message) }
     }
     listen("pointerup", event => {
       block(event)
@@ -128,6 +135,7 @@
     root.append(box)
     paint(box, areaRect({ rect: documentRect() }))
   }
+  const captureArea = rect => AnnotateInspector.captureArea(rect, host.closest("dialog:modal") || document.body)
   const directions = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
   const block = event => { event.preventDefault(); event.stopImmediatePropagation() }
   const docPoint = event => ({ x: event.clientX + scrollX, y: event.clientY + scrollY })
@@ -183,7 +191,7 @@
     const rect = adjustRect(areaDrag)
     cancelAdjust()
     if (adjustable && Object.keys(rect).some(key => rect[key] !== marker.anchor.rect[key])) {
-      try { void areaGesture("area-adjust", marker, AnnotateInspector.captureArea(rect)) }
+      try { void areaGesture("area-adjust", marker, captureArea(rect)) }
       catch (error) { send(null, error.message, true) }
     } else void areaGesture("area-focus", marker)
   }, { capture: true })

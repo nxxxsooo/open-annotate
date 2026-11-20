@@ -1,5 +1,36 @@
 # Releasing
 
+## 0.18.0 — Select page areas — 2026-11-20
+
+Prepared from `feat/browser-area-select` on top of 0.17.1. Mingjian dev-tested
+area selection and adjustable markers in Chrome on 2026-11-20, confirmed
+“没问题了” and chose to release 0.17.1 before 0.18.0. Unpublished hc work
+remains excluded.
+
+**Select area** captures page coordinates, visible text and element selectors
+without taking a screenshot. Unsent area markers stay visible and adjustable
+over the page and modal drawers. Reload the Chrome extension and restart
+OpenCode after updating for browser protocol 10.
+
+## 0.17.1 — picking inside modal drawers — 2026-11-16
+
+Prepared from public `origin/main` (`bbc4282`) in an isolated release worktree.
+Only the reviewed modal-overlay fix and browser regressions are included with
+version metadata and release notes. Unpublished hc development remains excluded.
+Mingjian explicitly authorized patch release and local-install verification.
+
+The annotation overlay uses the browser top layer so highlights, markers and
+reveal outlines remain visible over modal dialogs, including nested dialogs,
+dialog reopen and same-origin frames. It remains pointer-transparent; existing
+notes and protocol 8 are unchanged. Reload the Chrome extension and refresh
+pages already using annotation tools after updating; saved notes are preserved.
+
+Local native build, formatting/Clippy and all 403 Rust tests pass. `npm run check`
+passes 96 Node tests and the 64-entry host-only pack dry-run; the package verifier
+regression and all 53 isolated Chromium scenarios pass. Publication/install
+verification will be recorded after automation completes. Isolated browser and
+smoke tests do not drive daily Chrome profiles or real model turns.
+
 ## 0.17.0 — clear the round — 2026-11-13
 
 Prepared from public `origin/main` (`889837b`) in the isolated `release/0.17.0`
