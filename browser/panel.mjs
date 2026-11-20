@@ -1,4 +1,4 @@
-import { PROTOCOL, markdown, validateReview } from "./protocol.mjs"
+import { PROTOCOL, areaLabel, markdown, validateReview } from "./protocol.mjs"
 import { panelPolling, panelWindowID } from "./env.mjs"
 
 const $ = id => document.getElementById(id)
@@ -13,6 +13,7 @@ let state, model, destination, available, targets = [], workspaces = [], disconn
 let deliverySupported = true
 let refreshID = 0, connectionRevision = 0, connectionRefresh, connectionRefreshRevision, connectionTimer, scheduledRefresh
 let pendingAction, pendingFocus, undoRecord, clearBatchID, selectedNoteID, noteRenderKey, notice, outdated = false
+let areaViewKey
 let sessionSort = localStorage.getItem("sessionSort") || "updated", showAllSessions = false
 
 function icon(name) {
@@ -74,7 +75,47 @@ function dirty(m = model) {
     anchorIdentity(value.anchor) !== anchorIdentity(value.editing.anchor) : !!value.comment.trim()
 }
 const validDraft = () => !!model?.value?.comment.trim() && dirty()
-const anchorIdentity = anchor => anchor ? JSON.stringify([anchor.frame, anchor.type, anchor.selector, anchor.quote, anchor.prefix, anchor.suffix]) : ""
+const anchorIdentity = anchor => anchor ? JSON.stringify([anchor.frame, anchor.type, anchor.type === "area" ? anchor.rect : anchor.selector, anchor.quote, anchor.prefix, anchor.suffix]) : ""
+const targetLabel = anchor => anchor.type === "area" ? `${areaLabel(anchor)}${anchor.quote ? `: ${anchor.quote}` : ""}` : anchor.quote
+function areaDraft() {
+  const value = model?.value
+  if (value?.anchor.type !== "area" || value.editing) return null
+  const captureID = value.captures?.[state.tabID] || Object.values(value.captures || {})[0]
+  return captureID ? { id: `draft:${captureID}`, anchor: value.anchor } : null
+}
+function syncAreaView() {
+  if (!state || outdated) return
+  const focus = state.notes.some(note => note.id === selectedNoteID && note.page.url === state.page.url && note.anchor.type === "area") ? selectedNoteID : null
+  const view = { tabID: state.tabID, url: state.page.url, focus, draft: areaDraft(), eventID: state.areaEvent?.token }
+  const key = JSON.stringify(view)
+  if (key === areaViewKey) return
+  // Leave a tab's last marker view intact when its panel switches away.
+  areaViewKey = key
+  call({ action: "area-view", ...view }).catch(error => {
+    if (areaViewKey === key) areaViewKey = null
+    if (error.code !== "outdated" && state?.tabID === view.tabID) status(error.message, "error")
+  })
+}
+function applyAreaEvent(event) {
+  if (!event || model.areaEvent === event.token) return
+  model.areaEvent = event.token
+  if (event.draft) {
+    if (areaDraft()?.id !== event.id) return
+    selectedNoteID = null
+    if (event.anchor && anchorIdentity(model.value.anchor) !== anchorIdentity(event.anchor)) {
+      model.value.anchor = event.anchor
+      persistDraft(model).catch(() => {})
+    }
+  } else {
+    const note = state.notes.find(note => note.id === event.id)
+    if (!note) return
+    selectedNoteID = note.id
+    if (model.value?.editing?.id === note.id && event.revision === note.revision && model.value.editing.revision + 1 === note.revision) {
+      model.value.anchor = note.anchor; model.value.editing = clone(note)
+      persistDraft(model).catch(() => {})
+    }
+  }
+}
 function pendingCount() {
   const pending = state?.notes.filter(note => note.sentRevision !== note.revision) || []
   return pending.length + (validDraft() && !pending.some(note => note.id === model.value.editing?.id) ? 1 : 0)
@@ -86,7 +127,7 @@ function controls() {
   for (const button of $("kind").querySelectorAll("button")) button.disabled = lock
   $("save").disabled = lock || !state || !validDraft() || !!model?.conflict
   $("save-switch").disabled = lock || !validDraft() || !!model?.conflict
-  $("pick").disabled = !state || lock
+  $("pick").disabled = $("area").disabled = !state || lock
   $("cancel").disabled = lock
   for (const id of ["discard-switch", "keep-editing", "retry-draft", "reload-draft", "keep-draft", "copy-draft", "undo", "restore-round", "change-target"]) $(id).disabled = lock
   for (const row of $("targets").querySelectorAll(".session-row")) row.disabled = lock || !targets.some(target => target.id === row.dataset.targetId)
@@ -229,7 +270,7 @@ function renderComposer() {
   renderEmpty()
   if (!value) return
   $("composer-title").textContent = value.editing ? "Edit note" : "New note"
-  $("quote").textContent = value.anchor.quote
+  $("quote").textContent = targetLabel(value.anchor)
   if ($("comment").value !== value.comment) $("comment").value = value.comment
   for (const button of $("kind").querySelectorAll("button")) {
     const selected = button.dataset.kind === value.kind
@@ -264,8 +305,12 @@ function renderNotes() {
   $("notes-section").hidden = !notes.length
   const pageCount = new Set(notes.map(note => note.page.url)).size
   $("count").textContent = `${plural(notes.length)} in this round${pageCount > 1 ? ` · ${pageCount} pages` : ""}`
-  const key = JSON.stringify([notes, state?.page.url, state?.anchorStates, selectedNoteID])
-  if (key === noteRenderKey) return
+  const key = JSON.stringify([notes, state?.page.url, state?.anchorStates])
+  if (key === noteRenderKey) {
+    for (const item of $("notes").querySelectorAll("[data-note-id]")) item.classList.toggle("is-current", item.dataset.noteId === selectedNoteID)
+    return
+  }
+  const focused = document.activeElement?.classList.contains("note-target") ? document.activeElement.closest("[data-note-id]").dataset.noteId : null
   noteRenderKey = key; $("notes").replaceChildren()
   let pageURL
   for (const [index, note] of notes.entries()) {
@@ -285,10 +330,15 @@ function renderNotes() {
     item.className = `note${selectedNoteID === note.id ? " is-current" : ""}`; item.dataset.noteId = note.id
     number.className = "note-number"; number.setAttribute("aria-label", `Note ${index + 1}`)
     target.className = "note-target"; target.setAttribute("aria-label", `Show note ${index + 1} on page`)
-    target.append(make("span", note.anchor.quote.slice(0, 200)), icon("reveal"))
+    target.append(make("span", targetLabel(note.anchor).slice(0, 200)), icon("reveal"))
+    target.onfocus = () => {
+      if (note.anchor.type === "area" && note.page.url === state.page.url && selectedNoteID !== note.id) {
+        selectedNoteID = note.id; renderNotes(); syncAreaView()
+      }
+    }
     target.onclick = () => run("reveal", async () => {
       await call({ action: "reveal", url: state.page.url, noteID: note.id }); selectedNoteID = note.id
-      await refresh(); status("Element highlighted on the page"); renderNotes()
+      await refresh(); status(`${note.anchor.type === "area" ? "Area" : "Element"} highlighted on the page`); renderNotes()
       $("notes").querySelector(`[data-note-id="${CSS.escape(note.id)}"] .note-target`)?.focus({ preventScroll: true })
     })
     const comment = make("p", note.comment); comment.className = "note-comment"
@@ -305,7 +355,9 @@ function renderNotes() {
     bottom.append(meta, edit, remove); content.append(bottom); item.append(number, content); $("notes").append(item)
   }
   $("preview").textContent = notes.length ? markdown(review()) : "Add a note to preview the feedback."
-  call({ action: "markers" }).catch(() => {})
+  if (focused && (focused === selectedNoteID || notes.find(note => note.id === focused)?.anchor.type !== "area")) {
+    $("notes").querySelector(`[data-note-id="${CSS.escape(focused)}"] .note-target`)?.focus({ preventScroll: true })
+  }
 }
 // Send always means session delivery; Copy instead is a separate, stable action.
 function renderDelivery() {
@@ -356,6 +408,7 @@ function renderDelivery() {
 }
 function render() {
   renderComposer(); renderNotes()
+  syncAreaView()
   $("undo-notice").hidden = !undoRecord
   $("undo-text").textContent = undoRecord ? `${plural(undoRecord.notes.length)} removed.` : ""
   controls()
@@ -367,7 +420,9 @@ async function refresh() {
     const next = await call({ action: "current" })
     if (request !== refreshID) return
     if (next.protocol !== PROTOCOL) { markOutdated(); return }
-    if (state?.page.url !== next.page.url) { pendingAction = null; selectedNoteID = null; pendingFocus = null; if (notice?.page) notice = null }
+    if (state?.tabID !== next.tabID || state?.page.url !== next.page.url) {
+      pendingAction = null; selectedNoteID = null; pendingFocus = null; if (notice?.page) notice = null
+    }
     state = next; model = modelFor(next)
     $("page-title").textContent = next.page.title; $("page-title").title = next.page.title
     const url = new URL(next.page.url)
@@ -375,17 +430,21 @@ async function refresh() {
     $("page-url").title = next.page.url
     const pageError = next.detached || next.error
     $("page-error").hidden = !pageError; $("page-error").textContent = pageError || ""
-    $("pick-label").textContent = next.picking ? "Cancel pick (Esc)" : "Pick element"
-    $("pick").setAttribute("aria-pressed", String(!!next.picking)); $("pick-hint").hidden = !!next.picking
+    $("pick-label").textContent = next.mode === "element" ? "Cancel pick (Esc)" : "Pick element"
+    $("pick").setAttribute("aria-pressed", String(next.mode === "element"))
+    $("area").setAttribute("aria-pressed", String(next.mode === "area"))
+    $("pick-hint").hidden = next.mode === "element"
+    $("pick-hint").textContent = next.mode === "area" ? "Drag on page · Esc to cancel" : "or select text"
     if (next.captureID && next.captureID !== model.captureID) {
       model.captureID = next.captureID
-      if (next.anchor && next.draft.consumedCaptures?.[next.tabID] !== next.captureID) {
+      if (next.anchor && next.draft.consumedCaptures?.[next.tabID] !== next.captureID && model.value?.captures?.[next.tabID] !== next.captureID) {
         notice = null
         if (anchorIdentity(next.anchor) !== anchorIdentity(model.value?.anchor)) await requestAction({ type: "select", anchor: next.anchor,
           capture: { id: next.captureID, tabID: next.tabID } })
         else model.value.captures = { ...model.value.captures, [next.tabID]: next.captureID }
       } else if (next.error) status(next.error, "error")
     }
+    applyAreaEvent(next.areaEvent)
     render()
   } catch (error) {
     if (request !== refreshID || error.code === "outdated") return
@@ -497,6 +556,11 @@ $("comment").addEventListener("input", () => {
   model.value.comment = $("comment").value; notice = null
   persistDraft(model).catch(() => {}); controls()
 })
+$("comment").addEventListener("focus", () => {
+  if (!model?.value || model.value.anchor.type !== "area") return
+  selectedNoteID = model.value.editing?.id || null
+  renderNotes(); syncAreaView()
+})
 $("comment").addEventListener("keydown", event => {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !$("save").disabled) { event.preventDefault(); $("save").click() }
 })
@@ -508,7 +572,9 @@ for (const button of $("kind").querySelectorAll("button")) {
   })
 }
 $("save-shortcut").textContent = navigator.platform.includes("Mac") ? "⌘↵" : "Ctrl↵"
-task("pick", async () => { notice = null; await call({ action: "pick" }); await refresh() })
+for (const [button, mode] of [["pick", "element"], ["area", "area"]]) {
+  task(button, async () => { notice = null; await call({ action: "pick", mode: state.mode === mode ? null : mode }); await refresh() })
+}
 task("save", async () => { await saveCurrent(); focusWhenReady("#pick") })
 task("cancel", async () => { await discardDraft(); focusWhenReady("#pick") })
 task("save-switch", async () => { const action = pendingAction; await saveCurrent(); await performAction(action) })
@@ -671,7 +737,7 @@ document.addEventListener("click", event => {
 })
 document.addEventListener("keydown", event => {
   if (event.key !== "Escape") return
-  if (state?.picking) $("pick").click()
+  if (state?.mode) $(state.mode === "area" ? "area" : "pick").click()
   pendingAction = null; $("utilities").hidden = true; $("more").setAttribute("aria-expanded", "false"); showSessionOptions(false); renderComposer()
 })
 chrome.storage.onChanged.addListener((changes, area) => {

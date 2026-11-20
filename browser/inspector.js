@@ -123,6 +123,72 @@
       rect: Object.fromEntries(["x", "y", "width", "height"].map(key => [key, Math.round(rect[key])])),
       viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY } }
   }
+  const intersection = (a, b) => {
+    const left = Math.max(a.left, b.left), top = Math.max(a.top, b.top)
+    const right = Math.min(a.right, b.right), bottom = Math.min(a.bottom, b.bottom)
+    return right > left && bottom > top ? { left, top, right, bottom } : null
+  }
+  const size = rect => (rect.right - rect.left) * (rect.bottom - rect.top)
+  const contains = (outer, inner) => outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
+  function captureArea(rect) {
+    const viewport = { width: innerWidth, height: innerHeight, scrollX, scrollY }
+    const region = intersection(new DOMRect(rect.x - scrollX, rect.y - scrollY, rect.width, rect.height), new DOMRect(0, 0, innerWidth, innerHeight))
+    const container = [...document.querySelectorAll("dialog:modal")].at(-1) || document.body
+    if (!region || !container) return { type: "area", rect, viewport, quote: "", selectors: [] }
+    const omitted = textFilter(), clips = new WeakMap(), range = document.createRange(), candidates = []
+    function clip(element) {
+      if (!element) return region
+      if (clips.has(element)) return clips.get(element)
+      let bounds = clip(element.parentElement)
+      const style = getComputedStyle(element)
+      if (bounds && element.clientWidth && element.clientHeight && (style.overflowX !== "visible" || style.overflowY !== "visible")) {
+        const box = element.getBoundingClientRect()
+        bounds = intersection(bounds, {
+          left: style.overflowX === "visible" ? bounds.left : box.left,
+          right: style.overflowX === "visible" ? bounds.right : box.right,
+          top: style.overflowY === "visible" ? bounds.top : box.top,
+          bottom: style.overflowY === "visible" ? bounds.bottom : box.bottom,
+        })
+      }
+      clips.set(element, bounds)
+      return bounds
+    }
+    function textIn(node, bounds, start, end) {
+      range.setStart(node, start); range.setEnd(node, end)
+      const boxes = [...range.getClientRects()].filter(box => size(box) > 0)
+      if (!boxes.some(box => intersection(bounds, box))) return ""
+      if (end - start <= 1 || boxes.every(box => contains(bounds, box))) return node.data.slice(start, end)
+      const middle = Math.floor((start + end) / 2)
+      return textIn(node, bounds, start, middle) + textIn(node, bounds, middle, end)
+    }
+    let quote = ""
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT)
+    for (let node; (node = walker.nextNode());) {
+      const element = node.nodeType === Node.TEXT_NODE ? node.parentElement : node
+      if (omitted(element)) continue
+      const bounds = clip(element.parentElement)
+      if (!bounds) continue
+      if (node === element) {
+        const box = element.getBoundingClientRect()
+        const overlap = intersection(bounds, box)
+        if (overlap) candidates.push({ element, score: size(overlap) / (size(region) + size(box) - size(overlap)) })
+      } else if (quote.length < 4000 && node.data.trim()) {
+        const clipped = clip(element)
+        if (!clipped) continue
+        const text = textIn(node, clipped, 0, node.length).replace(/\s+/g, " ").trim()
+        if (text) quote = `${quote}${quote ? " " : ""}${text}`.slice(0, 4000)
+      }
+    }
+    const selectors = []
+    for (const { element } of candidates.sort((a, b) => b.score - a.score)) {
+      try {
+        const hint = selector(element)
+        if (hint.length <= 1000) selectors.push(hint)
+      } catch { /* A selector is evidence, not the area anchor. */ }
+      if (selectors.length === 5) break
+    }
+    return { type: "area", rect, viewport, quote, selectors }
+  }
   function frame() {
     const selectors = []
     for (let current = window; current !== current.top; current = current.parent) {
@@ -131,5 +197,5 @@
     }
     return selectors.length ? { selectors, url: location.href } : null
   }
-  globalThis.AnnotateInspector = { capture, text: elementText, frame }
+  globalThis.AnnotateInspector = { capture, captureArea, text: elementText, frame }
 })();
