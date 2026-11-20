@@ -33,7 +33,7 @@ const USAGE: &str = "usage:
   annotate-tui --snapshot <file.md> [cols rows scroll] [select-quote] [menu]
   annotate-tui config
   annotate-tui --version
-  annotate-tui herdr open [file.md | folder] [--placement overlay|split|popup] [--deliver-to <pane>]
+  annotate-tui herdr open [file.md | folder] [--placement overlay|split|tab|zoomed] [--deliver-to <pane>]
   annotate-tui herdr last [--placement P] [--deliver-to <pane>] [--newest]
   annotate-tui herdr terminal [--lines N] [--placement P] [--deliver-to <pane>] [--print]
   annotate-tui herdr pane

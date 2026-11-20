@@ -102,10 +102,10 @@ fn mirror_defaults_to_a_split_next_to_the_remote_invoking_pane() {
 fn explicit_placement_still_wins_over_the_mirror_default() {
     let mut env =
         env(None, Some(HerdrContext { invocation_source: Some("mirror".into()), ..HerdrContext::default() }));
-    env.placement = Some("popup".into());
+    env.placement = Some("tab".into());
     let launch =
         plan(&env, &Config::default(), OpenArgs::default(), Path::new("/")).expect("environment placement");
-    assert_eq!(launch.placement, Placement::Popup);
+    assert_eq!(launch.placement, Placement::Tab);
     let args = OpenArgs { placement: Some(Placement::Overlay), ..OpenArgs::default() };
     let launch = plan(&env, &Config::default(), args, Path::new("/")).expect("explicit argument placement");
     assert_eq!(launch.placement, Placement::Overlay);
@@ -143,32 +143,33 @@ fn only_file_urls_are_opened() {
 }
 
 #[test]
-fn popup_placement_emits_size_and_no_target_pane() {
-    let config = Config::parse("[herdr]\npopup_width = \"100%\"\npopup_height = \"100%\"\n").expect("config");
-    let args = OpenArgs {
-        placement: Some(Placement::Popup),
-        deliver_to: Some("w1:p1".into()),
-        ..OpenArgs::default()
-    };
-    let launch = plan(&env(Some("w1:p9"), None), &config, args, Path::new("/tmp")).expect("plans");
-    assert_eq!(launch.deliver, Some(Target { pane: "w1:p1".into(), agent: None }), "--deliver-to wins");
-    let args = argv(&launch);
-    assert!(args.windows(2).any(|w| w == ["--width", "100%"]));
-    assert!(args.windows(2).any(|w| w == ["--height", "100%"]));
-    assert!(!args.iter().any(|a| a == "--target-pane"));
+fn tab_and_zoomed_pass_through_without_split_options() {
+    for (name, placement) in [("tab", Placement::Tab), ("zoomed", Placement::Zoomed)] {
+        let config = Config::parse(&format!("[herdr]\nplacement = \"{name}\"\n")).expect("config");
+        let args = OpenArgs { deliver_to: Some("w1:p1".into()), ..OpenArgs::default() };
+        let launch = plan(&env(Some("w1:p9"), None), &config, args, Path::new("/tmp")).expect("plans");
+        assert_eq!(launch.placement, placement);
+        assert_eq!(name.parse::<Placement>().expect("CLI placement"), placement);
+        let args = argv(&launch);
+        assert_eq!(args.get(7..10).expect("placement flags"), ["--placement", name, "--focus"]);
+        assert!(args.iter().any(|a| a == "PLANNOTATOR_TUI_DELIVER_TO=w1:p1"));
+    }
 }
 
 #[test]
 fn env_placement_beats_config_and_arg_beats_env() {
-    let config = Config::parse("[herdr]\nplacement = \"popup\"\n").expect("config");
+    let config = Config::parse("[herdr]\nplacement = \"zoomed\"\n").expect("config");
     let mut env = env(None, None);
     env.placement = Some("split".into());
     let launch = plan(&env, &config, OpenArgs::default(), Path::new("/tmp")).expect("plans");
     assert_eq!(launch.placement, Placement::Split);
     let args = OpenArgs { placement: Some(Placement::Overlay), ..OpenArgs::default() };
     assert_eq!(plan(&env, &config, args, Path::new("/tmp")).expect("plans").placement, Placement::Overlay);
-    env.placement = Some("floating".into());
-    assert!(plan(&env, &config, OpenArgs::default(), Path::new("/tmp")).is_err());
+    env.placement = Some("popup".into());
+    let err = plan(&env, &config, OpenArgs::default(), Path::new("/tmp")).expect_err("rejected");
+    assert!(
+        format!("{err:#}").contains("unknown placement \"popup\"; expected overlay, split, tab or zoomed")
+    );
 }
 
 #[test]

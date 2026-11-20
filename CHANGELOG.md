@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.1 — picking inside modal drawers
+
+- Keep element highlights, saved-note markers and reveal outlines visible above
+  modal dialogs and drawers, including nested dialogs and same-origin frames.
+- Restore the overlay as dialogs open, close or reopen without intercepting page
+  clicks. Saved notes and browser protocol 8 are unchanged.
+- Reload the Chrome extension and refresh pages already using annotation tools
+  after updating. Saved notes remain available.
+
 ## 0.17.0 — clear the round
 
 - **Clear** in the notes header removes every unsent note in the round; each page

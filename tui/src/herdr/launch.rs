@@ -30,8 +30,6 @@ pub(crate) struct Launch {
     pub(crate) cwd: PathBuf,
     pub(crate) placement: Placement,
     pub(crate) direction: SplitDirection,
-    /// Popup `(width, height)`.
-    pub(crate) popup: (String, String),
     /// The pane a split opens next to.
     pub(crate) target_pane: Option<String>,
     pub(crate) deliver: Option<Target>,
@@ -271,7 +269,6 @@ pub(crate) fn plan(env: &HerdrEnv, config: &Config, args: OpenArgs, cwd: &Path) 
         cwd: dir,
         placement,
         direction: config.herdr.split_direction,
-        popup: (config.herdr.popup_width.clone(), config.herdr.popup_height.clone()),
         target_pane,
         deliver,
         plugin: env.plugin_id.clone().unwrap_or_else(|| "annotate".to_owned()),
@@ -289,18 +286,11 @@ pub(crate) fn argv(launch: &Launch) -> Vec<String> {
         .map(str::to_owned)
         .collect();
     out.extend(["--placement".to_owned(), launch.placement.to_string()]);
-    match launch.placement {
-        Placement::Split => {
-            out.extend(["--direction".to_owned(), launch.direction.to_string()]);
-            if let Some(pane) = &launch.target_pane {
-                out.extend(["--target-pane".to_owned(), pane.clone()]);
-            }
+    if launch.placement == Placement::Split {
+        out.extend(["--direction".to_owned(), launch.direction.to_string()]);
+        if let Some(pane) = &launch.target_pane {
+            out.extend(["--target-pane".to_owned(), pane.clone()]);
         }
-        Placement::Popup => {
-            out.extend(["--width".to_owned(), launch.popup.0.clone()]);
-            out.extend(["--height".to_owned(), launch.popup.1.clone()]);
-        }
-        Placement::Overlay => {}
     }
     out.push("--focus".to_owned());
     out.extend(["--cwd".to_owned(), launch.cwd.display().to_string()]);

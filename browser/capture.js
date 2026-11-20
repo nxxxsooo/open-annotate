@@ -1,12 +1,15 @@
 (() => {
   if (globalThis.__opencodeAnnotate === true) throw new Error("Refresh this page once to update annotation tools. Saved notes will remain.")
-  if (globalThis.__opencodeAnnotate?.version === 7) return
+  if (globalThis.__opencodeAnnotate?.version === 8) return
   globalThis.__opencodeAnnotate?.dispose()
   if (!["text/html", "application/xhtml+xml"].includes(document.contentType)) throw new Error("Only HTML pages are supported")
   const listeners = new AbortController()
   const on = (target, event, handler, options = {}) => target.addEventListener(event, handler, { ...options, signal: listeners.signal })
   const host = document.createElement("div")
   host.setAttribute("data-opencode-annotate", "")
+  // A manual popover puts the pointer-transparent viewport overlay in the top
+  // layer without moving it under transformed/clipping dialog ancestors.
+  host.setAttribute("popover", "manual")
   host.style.cssText = "all:initial!important;position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important"
   const root = host.attachShadow({ mode: "closed" })
   const style = document.createElement("style")
@@ -16,6 +19,16 @@
   const highlight = document.createElement("div"); highlight.className = "box"
   let highlighted, highlightTimer
   let picking = false, url = location.href, timer, markers = [], active = true
+  let modals = []
+  function syncLayer(force = false) {
+    const next = [...document.querySelectorAll("dialog:modal")]
+    const changed = force || next.length !== modals.length || next.some((node, index) => node !== modals[index])
+    if (changed) box.remove()
+    if (changed && host.matches(":popover-open")) host.hidePopover()
+    if (!host.matches(":popover-open")) host.showPopover()
+    modals = next
+  }
+  syncLayer()
   function send(anchor = null, error = null, modeOnly = false, ready = false) {
     if (!active) return
     try {
@@ -42,6 +55,7 @@
   on(document, "pointerup", selection)
   const hover = event => {
     if (!picking) return
+    syncLayer()
     if (["iframe", "frame", "frameset"].includes(event.target.localName)) {
       box.remove()
       if (event.target.localName !== "frameset") {
@@ -103,6 +117,7 @@
     } catch { return "invalid selector" }
   }
   function draw() {
+    syncLayer()
     if (highlighted?.isConnected) {
       const rect = highlighted.getBoundingClientRect()
       highlight.style.cssText = `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`
@@ -121,8 +136,13 @@
     }
   }
   on(document, "scroll", draw, { capture: true, passive: true }); on(window, "resize", draw)
-  const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(draw, 160) })
-  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true })
+  const observer = new MutationObserver(records => {
+    // showModal/close mutate `open`; observe it as well as removed dialogs.
+    // Force a raise even if a dialog closes and reopens in one mutation batch.
+    syncLayer(records.some(record => record.type === "attributes" && record.target.localName === "dialog"))
+    clearTimeout(timer); timer = setTimeout(draw, 160)
+  })
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["open"] })
   on(document, "load", event => {
     if (["iframe", "frame"].includes(event.target.localName)) chrome.runtime.sendMessage({ action: "frames-changed" }).catch(() => {})
   }, { capture: true })
@@ -133,6 +153,6 @@
     try { chrome.runtime.onMessage.removeListener(onMessage) } catch { /* previous extension context may already be invalidated */ }
     delete globalThis.__opencodeAnnotate
   }
-  globalThis.__opencodeAnnotate = { dispose, version: 7 }
+  globalThis.__opencodeAnnotate = { dispose, version: 8 }
   send(null, null, true, true)
 })();

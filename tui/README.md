@@ -55,6 +55,38 @@ Standalone annotation data defaults to `~/.local/share/opencode-annotate/tui`
 (`%LOCALAPPDATA%/opencode-annotate/tui` on Windows). Hosted reviews use their own private
 snapshot stores. An explicit `PLANNOTATOR_DATA_DIR` can still open a retained older draft.
 
+## Herdr
+
+The [Herdr commands](../README.md#herdr) use an enabled plugin with ID `annotate`.
+For a local setup on macOS (tested with Herdr 0.9.5), save this as `herdr-plugin.toml`
+and run `herdr plugin link /absolute/path/to/plugin-directory`:
+
+```toml
+id = "annotate"
+name = "Annotate"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+platforms = ["macos"]
+
+[[panes]]
+id = "doc"
+title = "Annotate"
+placement = "overlay"
+command = ["/absolute/path/to/annotate-tui", "herdr", "pane"]
+```
+
+`herdr pane` is the plugin entrypoint: it reads the file, reply or terminal source
+passed by the launcher. Set `--placement overlay|split|tab|zoomed` on `herdr open`,
+`herdr last` or `herdr terminal`; the default is `overlay`. Remove any old
+`popup_width` and `popup_height` settings and replace `placement = "popup"` with
+one of the supported values. Agent delivery uses `herdr agent prompt`; a blocked send
+leaves notes pending for a manual retry and attempts an OSC 52 clipboard copy.
+OpenCode's `/annotate` clears the inherited `HERDR_*` variables before launching
+the reviewer, so it does not use this route.
+
+Runtime checks used fixture panes and a local transcript. Real model turns and
+OS clipboard integration were not tested.
+
 ## Local image-toolbar trial
 
 The default toolbar remains Unicode. To opt in, add to the TUI config selected by

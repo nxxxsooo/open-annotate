@@ -41,6 +41,126 @@ try {
     headless: true, viewport: { width: 1440, height: 1000 },
     args: [`--disable-extensions-except=${installation.extensionDirectory}`, `--load-extension=${installation.extensionDirectory}`, "--enable-unsafe-extension-debugging"],
   })
+  // Synthetic modal only: never import private source-page content into fixtures.
+  const modalPage = await context.newPage()
+  await modalPage.setContent(`<!doctype html><style>
+    dialog{padding:35px;width:500px;height:300px;transform:translate(25px,15px) scale(.9)}
+    p{padding:20px;background:white}
+  </style><p id=outside>Outside target</p><dialog id=pane><p id=inside>Drawer target</p>
+    <input type=password value=never-export-password><dialog id=nested><p id=inner>Nested target</p></dialog></dialog>`)
+  await modalPage.evaluate(() => {
+    window.captures = []
+    window.chrome = { runtime: {
+      sendMessage: async message => { window.captures.push(message) },
+      onMessage: { addListener: listener => { window.captureMessage = listener }, removeListener() {} },
+    } }
+    const attach = Element.prototype.attachShadow
+    Element.prototype.attachShadow = function (options) {
+      const root = attach.call(this, options)
+      if (this.hasAttribute("data-opencode-annotate")) window.overlayRoot = root
+      return root
+    }
+    document.querySelector("#pane").showModal()
+  })
+  await modalPage.addScriptTag({ path: path.join(project, "browser/inspector.js") })
+  await modalPage.addScriptTag({ path: path.join(project, "browser/capture.js") })
+  const modalMessage = message => modalPage.evaluate(message => new Promise(resolve => window.captureMessage(message, {}, resolve)), message)
+  await modalMessage({ action: "pick", picking: true })
+  await modalPage.locator("#inside").hover()
+  assert.equal(await modalPage.evaluate(() => {
+    const host = document.querySelector("[data-opencode-annotate]")
+    // z-index alone cannot escape a modal's top layer.
+    return host.matches(":popover-open") || !!host.closest("dialog:modal")
+  }), true, "hover overlay must render above the modal top layer")
+  const overlayRect = selector => modalPage.evaluate(selector => {
+    const target = document.querySelector(selector).getBoundingClientRect()
+    const overlay = [...window.overlayRoot.querySelectorAll(".box")].at(-1).getBoundingClientRect()
+    return { x: overlay.x - target.x, y: overlay.y - target.y, width: overlay.width - target.width, height: overlay.height - target.height }
+  }, selector)
+  const alignedOverlay = async selector => {
+    const rect = await overlayRect(selector)
+    for (const [key, expected] of Object.entries({ x: 0, y: 0, width: 4, height: 4 })) {
+      assert.ok(Math.abs(rect[key] - expected) < .05, `${selector} overlay ${key}: ${rect[key]} (expected ${expected})`)
+    }
+  }
+  await alignedOverlay("#inside")
+  const insideRect = await modalPage.locator("#inside").boundingBox()
+  const clip = { x: Math.floor(insideRect.x), y: Math.floor(insideRect.y), width: 12, height: 12 }
+  const paintedHover = await modalPage.screenshot({ clip })
+  await modalPage.evaluate(() => { window.overlayRoot.querySelector(".box").style.visibility = "hidden" })
+  assert.notDeepEqual(await modalPage.screenshot({ clip }), paintedHover, "hover border is actually painted above the modal")
+  await modalPage.locator("#inside").click()
+  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#inside")
+  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).picking), false)
+  const insideAnchor = await modalPage.evaluate(() => window.captures.at(-1).anchor)
+  await modalMessage({ action: "markers", notes: [{ anchor: insideAnchor }] })
+  assert.equal(await modalPage.evaluate(() => window.overlayRoot.querySelector(".pin").textContent), "1")
+  const pinPosition = await modalPage.evaluate(() => {
+    const target = document.querySelector("#inside").getBoundingClientRect()
+    const pin = window.overlayRoot.querySelector(".pin").getBoundingClientRect()
+    return [pin.x - target.x, pin.y - target.y]
+  })
+  assert.ok(pinPosition.every(value => Math.abs(value + 10) < .05))
+  const pinRect = await modalPage.evaluate(() => {
+    const rect = window.overlayRoot.querySelector(".pin").getBoundingClientRect()
+    return { x: Math.ceil(rect.x + 6), y: Math.ceil(rect.y + 6), width: 16, height: 16 }
+  })
+  const paintedPin = await modalPage.screenshot({ clip: pinRect })
+  await modalPage.evaluate(() => { window.overlayRoot.querySelector(".pin").style.visibility = "hidden" })
+  assert.notDeepEqual(await modalPage.screenshot({ clip: pinRect }), paintedPin, "numbered pin is painted within the modal")
+  assert.equal((await modalMessage({ action: "reveal", anchor: insideAnchor })).ok, true)
+  await alignedOverlay("#inside")
+  await modalPage.evaluate(() => {
+    document.querySelector("#pane").close()
+    document.querySelector("#pane").showModal()
+  })
+  const revealClip = { ...clip, x: clip.x + 80 }
+  const paintedReveal = await modalPage.screenshot({ clip: revealClip })
+  await modalPage.evaluate(() => { window.overlayRoot.querySelector(".box").style.visibility = "hidden" })
+  assert.notDeepEqual(await modalPage.screenshot({ clip: revealClip }), paintedReveal, "reveal remains painted after close/reopen without another hover")
+  // Opening another modal after injection must raise the overlay again. This
+  // nested modal also supplies a transformed ancestor that reparenting breaks.
+  await modalPage.evaluate(() => document.querySelector("#nested").showModal())
+  await modalMessage({ action: "pick", picking: true })
+  await modalPage.locator("#inner").hover()
+  await alignedOverlay("#inner")
+  const innerRect = await modalPage.locator("#inner").boundingBox()
+  const innerClip = { x: Math.floor(innerRect.x), y: Math.floor(innerRect.y), width: 12, height: 12 }
+  const paintedNested = await modalPage.screenshot({ clip: innerClip })
+  await modalPage.evaluate(() => { [...window.overlayRoot.querySelectorAll(".box")].at(-1).style.visibility = "hidden" })
+  assert.notDeepEqual(await modalPage.screenshot({ clip: innerClip }), paintedNested, "overlay is painted above a modal opened after injection")
+  await modalPage.locator("#inner").click()
+  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#inner")
+  await modalPage.evaluate(() => document.querySelector("#nested").close())
+  await modalMessage({ action: "pick", picking: true })
+  await modalPage.locator("#inside").hover()
+  await modalPage.locator("#inside").click()
+  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#inside")
+  // Filtering and selection capture continue to use the production inspector.
+  await modalPage.evaluate(() => {
+    const range = document.createRange()
+    range.selectNodeContents(document.querySelector("#inside"))
+    getSelection().removeAllRanges(); getSelection().addRange(range)
+    document.dispatchEvent(new Event("pointerup"))
+  })
+  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.type), "text")
+  await modalMessage({ action: "pick", picking: true })
+  await modalPage.locator("input").click()
+  assert.ok(!(await modalPage.evaluate(() => JSON.stringify(window.captures.at(-1).anchor))).includes("never-export"))
+  await modalPage.evaluate(() => {
+    document.querySelector("#pane").close()
+    document.querySelector("#pane").showModal()
+    document.querySelector("#pane").remove()
+  })
+  await modalMessage({ action: "pick", picking: true })
+  await modalPage.locator("#outside").hover()
+  await alignedOverlay("#outside")
+  await modalPage.locator("#outside").click()
+  assert.equal(await modalPage.evaluate(() => window.captures.at(-1).anchor.selector), "#outside")
+  await modalPage.evaluate(() => window.__opencodeAnnotate.dispose())
+  assert.equal(await modalPage.locator("[data-opencode-annotate]").count(), 0)
+  await modalPage.close()
+  passed.push("Modal hover, pins, reveal and capture survive transformed/nested dialogs, open/close/removal and disposal")
   const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker")
   await worker.evaluate(async () => {
     const deadline = Date.now() + 5000
@@ -918,7 +1038,7 @@ try {
       await rpc({ action: "current" })
       const upgraded = await worker.evaluate(async () => {
         const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version === 7 })
+        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version === 8 })
       })
       assert.ok(upgraded.every(item => item.result))
       passed.push("Pre-frame page tools are replaced once; subsequent injections preserve the current inspector")
