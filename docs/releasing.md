@@ -12,11 +12,31 @@ without taking a screenshot. Unsent area markers stay visible and adjustable
 over the page and modal drawers. Reload the Chrome extension and restart
 OpenCode after updating for browser protocol 10.
 
+| Surface | Verified state |
+|---|---|
+| Source | [PR #11](https://github.com/nxxxsooo/opencode-annotate/pull/11), source `ab039f8`, merged/tagged commit `aa070fbffbe29b3673043a1c36f268ed4f8de941` (`v0.18.0`). |
+| Local checks | Local TUI build, formatting/Clippy and 403 Rust tests, `npm run check` (96 Node tests and a 64-entry host-only pack dry-run), the package verifier regression, and 23 isolated OpenCode smoke scenarios pass. All 57 isolated Chromium scenarios pass twice after fixing the stale-note-button race. |
+| CI | PR run `44691993177`, main run `44692427016` and publish run `44692843264` succeeded, including all five native targets, Safari's converter/Xcode gate and package checks. |
+| Publish / GitHub Release | npm `@nxxxsooo/opencode-annotate@0.18.0` is `latest` through trusted publishing; [GitHub Release v0.18.0](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.18.0) is public. |
+| Registry | Downloaded archive has 68 entries, matching SHA-512 integrity and `gitHead` `aa070fb`, package and extension version 0.18.0, protocol 10 and all five native executables. All 23 isolated OpenCode smoke scenarios also pass from the downloaded package. |
+| Maintainer install | `opencode plugin list` resolves the same local checkout, fast-forwarded to the released `main` commit before this docs-only receipt. The bundled darwin-arm64 reviewer reports 0.18.0. The merged feature branch was removed locally and remotely. |
+
+The first integrated Chromium run exposed an off-page Edit race: while the
+panel switched through a tab that had not been granted access, stale note
+buttons could read an empty page state. Note controls now require a valid page
+state, and the regression checks both the disconnected transition and off-page
+Edit after reconnection. The modal regression checks actual painting, marker
+activation and dragging above a nested dialog.
+
+Isolated tests do not verify a live model turn, the installed Safari UI or a
+reload of the maintainer's daily Chrome profiles.
+
 ## 0.17.1 — picking inside modal drawers — 2026-11-16
 
 Prepared from public `origin/main` (`bbc4282`) in an isolated release worktree.
-Only the reviewed modal-overlay fix and browser regressions are included with
-version metadata and release notes. Unpublished hc development remains excluded.
+The candidate includes the reviewed modal-overlay fix and browser regressions,
+plus the Herdr 0.9.5 pane-placement update. Unpublished hc development remains
+excluded.
 Mingjian explicitly authorized patch release and local-install verification.
 
 The annotation overlay uses the browser top layer so highlights, markers and
@@ -25,11 +45,17 @@ dialog reopen and same-origin frames. It remains pointer-transparent; existing
 notes and protocol 8 are unchanged. Reload the Chrome extension and refresh
 pages already using annotation tools after updating; saved notes are preserved.
 
-Local native build, formatting/Clippy and all 403 Rust tests pass. `npm run check`
-passes 96 Node tests and the 64-entry host-only pack dry-run; the package verifier
-regression and all 53 isolated Chromium scenarios pass. Publication/install
-verification will be recorded after automation completes. Isolated browser and
-smoke tests do not drive daily Chrome profiles or real model turns.
+| Surface | Verified state |
+|---|---|
+| Source | [PR #10](https://github.com/nxxxsooo/opencode-annotate/pull/10), source `adc523d`, merged/tagged commit `9eac8d2bd5b6f0d5978b5ddc9b710cb863556959` (`v0.17.1`). |
+| Local checks | Local TUI build, formatting/Clippy and 403 Rust tests, `npm run check` (96 Node tests and a 64-entry host-only pack dry-run), all 23 isolated OpenCode smoke scenarios and all 53 isolated Chromium scenarios pass. |
+| CI | PR run `44326062984`, main run `44689640051` and publish run `44690836883` succeeded, including all five native targets, Safari's converter/Xcode gate and package checks. |
+| Publish / GitHub Release | npm `@nxxxsooo/opencode-annotate@0.17.1` was verified as `latest` through trusted publishing before 0.18.0 superseded it; [GitHub Release v0.17.1](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.17.1) is public. |
+| Registry | Downloaded archive has 68 entries, matching SHA-512 integrity and `gitHead` `9eac8d2`, package and extension version 0.17.1, protocol 8 and all five native executables. All 23 isolated OpenCode smoke scenarios also pass from the downloaded package. |
+| Maintainer install | The checkout stayed on the area-selection development branch during this publication and advanced to `main` with 0.18.0. The clean 0.17.1 release worktree and its remote branch were removed after verification. |
+
+Isolated browser and smoke tests do not drive daily Chrome profiles or real
+model turns.
 
 ## 0.17.0 — clear the round — 2026-11-13
 
