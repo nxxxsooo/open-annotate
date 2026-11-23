@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Use `/annotate-file [query]` to pick a text or config file from the session
+  directory using OpenCode's `@` file search.
+- Review text and config files by path too. Non-Markdown snapshots display as
+  code blocks, and `.env` and credential-looking filenames are excluded.
+
 ## 0.18.0 — Select page areas
 
 - Choose **Select area** in the browser panel and drag a rectangle. Feedback
