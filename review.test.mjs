@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { test } from "node:test"
 import { listTargets } from "./bridge/receiver.mjs"
 import { request } from "./bridge/wire.mjs"
@@ -776,6 +776,101 @@ test("absolute document paths keep recovery snapshots separate from exported fee
   assert.match(metadata.sourceHash, /^[a-f0-9]{64}$/)
   assert.equal(await readFile(file, "utf8"), text)
 })
+
+test("the file picker searches the captured directory and opens the chosen config snapshot", async t => {
+  const sessionDir = await documentFolder(t)
+  const returnedDir = path.join(sessionDir, "config")
+  const file = path.join(returnedDir, "settings.yml")
+  const text = "# Config comment\nvalue: Alpha paragraph.\nexample: '````'"
+  await mkdir(returnedDir)
+  await writeFile(file, text)
+  const h = await harness(t, {
+    sessionDir, changeRoute: true, expectedText: `\`\`\`\`\`yaml\n${text}\n\`\`\`\`\`\n`,
+  })
+  h.ctx.client.file = { async find(input, { signal }) {
+    assert.deepEqual(input, { query: "set", type: "file", limit: 200, location: { directory: sessionDir } })
+    assert.ok(signal instanceof AbortSignal)
+    return {
+      location: { directory: returnedDir },
+      data: [
+        ...["settings.yml", "../notes.txt", ".editorconfig", "makefile", "main.ts", ".env.local",
+          "credentials.json", "id_rsa.txt", "server.pem.txt", "../../outside.txt"].map(path => ({ path, type: "file" })),
+        { path: "directory.md", type: "directory" },
+      ],
+    }
+  } }
+  h.ctx.ui.dialog.select = async ({ title, options }) => {
+    assert.equal(title, "Annotate file")
+    assert.deepEqual(options.map(option => option.title), ["settings.yml", "../notes.txt", ".editorconfig", "makefile"])
+    assert.equal(options[0].value, file)
+    return options[0].value
+  }
+  await h.command.file(" set ")
+  assert.equal(h.pages(), 0)
+  assert.equal(path.basename(h.invocation().file), "settings.yml")
+  assert.equal(h.sent.length, 1)
+  assert.equal(h.sent[0].sessionID, "ses_original")
+  assert.ok(h.sent[0].text.includes(file))
+  assert.ok(h.sent[0].text.includes(createHash("sha256").update(text).digest("hex")))
+  assert.equal(await readFile(file, "utf8"), text)
+})
+
+for (const eligible of [true, false]) {
+  test(eligible ? "cancelling the file picker opens nothing" : "the file picker notices when no eligible files are found", async t => {
+    const sessionDir = await documentFolder(t)
+    const h = await harness(t, { sessionDir })
+    h.ctx.client.file = { async find({ query }) {
+      assert.equal(query, "")
+      return { location: { directory: sessionDir }, data: [{ type: "file", path: eligible ? "notes.md" : ".env.json" }] }
+    } }
+    let selections = 0
+    h.ctx.ui.dialog.select = async () => { selections++ }
+    await h.command.file()
+    assert.equal(selections, eligible ? 1 : 0)
+    assert.deepEqual(h.transitions, [])
+    assert.deepEqual(h.sent, [])
+    if (eligible) assert.deepEqual(h.notices, [])
+    else assert.match(h.notices[0].message, /No eligible text or config files/)
+  })
+}
+
+test("the file picker cannot open a symlink outside the session directory", async t => {
+  const outside = await documentFolder(t)
+  const sessionDir = await documentFolder(t)
+  const file = path.join(sessionDir, "notes.txt")
+  await writeFile(path.join(outside, "notes.txt"), "Outside the session")
+  await symlink(path.join(outside, "notes.txt"), file, "file")
+  const h = await harness(t, { sessionDir })
+  h.ctx.client.file = { async find() {
+    return { location: { directory: sessionDir }, data: [{ type: "file", path: "notes.txt" }] }
+  } }
+  h.ctx.ui.dialog.select = async ({ options }) => options[0].value
+  await h.command.file()
+  assert.deepEqual(h.transitions, [])
+  assert.match(h.notices[0].message, /inside this session's directory/)
+})
+
+test("a config file can also be reviewed directly by path", async t => {
+  const sessionDir = await documentFolder(t)
+  const text = '# Config comment\nlabel = "Alpha paragraph."\n'
+  await writeFile(path.join(sessionDir, "settings.toml"), text)
+  const h = await harness(t, { sessionDir, expectedText: `\`\`\`toml\n${text}\`\`\`\n` })
+  await h.command.run("settings.toml")
+  assert.equal(h.sent.length, 1)
+  assert.match(h.sent[0].text, /settings\.toml/)
+})
+
+for (const name of [".env", ".env.example.json", "credentials.json", "main.ts"]) {
+  test(`${name} is not an eligible document`, async t => {
+    const sessionDir = await documentFolder(t)
+    await writeFile(path.join(sessionDir, name), "Alpha paragraph.")
+    const h = await harness(t, { sessionDir })
+    await h.command.run(name)
+    assert.deepEqual(h.transitions, [])
+    assert.deepEqual(h.sent, [])
+    assert.match(h.notices[0].message, /Choose a supported text or config file/)
+  })
+}
 
 for (const invalid of ["missing.md", "directory.md", "binary.txt", "large.txt"]) {
   test(`${invalid} fails before taking over the terminal or submitting a prompt`, async t => {

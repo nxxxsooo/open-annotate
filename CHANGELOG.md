@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.0 — Annotate files
+
+- Choose **Annotate a file (TUI)** or run `/annotate-file [query]` to find text
+  and config files in the current session's directory using OpenCode's `@`
+  file search.
+- Pass a supported file path directly to `/annotate` as before. Non-Markdown
+  files display as code blocks, preserving their formatting. `.env` and
+  credential-looking filenames are excluded.
+
 ## 0.18.0 — Select page areas
 
 - Choose **Select area** in the browser panel and drag a rectangle. Feedback

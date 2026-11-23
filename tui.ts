@@ -50,6 +50,14 @@ export default Plugin.define({
             slash: { name: "annotate", arguments: true },
             run: review.run,
           }, {
+            id: "opencode-annotate.annotate-file",
+            title: "Annotate a file (TUI)",
+            description: "Choose a text or config file in this session's directory",
+            group: "Annotate",
+            palette: true,
+            slash: { name: "annotate-file", arguments: true },
+            run: review.file,
+          }, {
             id: "opencode-annotate.annotate-pick",
             title: "Annotate earlier text (TUI)",
             description: "Choose a recent reply or progress update to annotate",

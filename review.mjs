@@ -1,6 +1,6 @@
 import { spawn, execFile } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -12,23 +12,61 @@ import { createInputSource } from "./input-source.mjs"
 import { resolveTuiBinary } from "./tui/binary.mjs"
 
 const execute = promisify(execFile)
-const documentExtensions = new Set([".md", ".mdx", ".markdown", ".txt"])
+const markdownExtensions = new Set(["md", "mdx", "markdown"])
+const documentLanguages = new Set([
+  "txt", "rst", "adoc", "org", "tex", "csv", "tsv", "log",
+  "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg", "conf", "properties", "xml", "plist",
+])
+const documentNames = new Map([
+  [".editorconfig", "ini"], [".gitignore", "text"], [".gitattributes", "text"],
+  [".dockerignore", "text"], ["dockerfile", "dockerfile"], ["makefile", "makefile"],
+])
+const languageAliases = { txt: "text", log: "text", yml: "yaml", plist: "xml" }
 const maxDocumentBytes = 2 * 1024 * 1024
+
+function documentLanguage(file) {
+  const name = path.basename(file).toLowerCase()
+  if (name.startsWith(".env") ||
+      /(?:^|[._-])(?:credentials?|secrets?|passwords?|private[._-]?keys?|id_(?:rsa|dsa|ecdsa|ed25519)|pem|key|p12|pfx|ppk)(?:[._-]|$)/.test(name)) return
+  const extension = path.extname(name).slice(1)
+  if (markdownExtensions.has(extension)) return "markdown"
+  if (documentLanguages.has(extension)) return languageAliases[extension] ?? extension
+  return documentNames.get(name)
+}
+
+async function sessionDirectory(client, sessionID, signal) {
+  const session = await client.session.get({ sessionID }, { signal })
+  const directory = session.location?.directory
+  if (!directory) throw new Error("Can't determine the current session's working directory.")
+  return directory
+}
+
+function documentSnapshot(text, language) {
+  if (language === "markdown") return text
+  // Let the Markdown reviewer display the source literally, even if it contains fences.
+  let length = 3
+  for (const run of text.matchAll(/`{3,}/g)) length = Math.max(length, run[0].length + 1)
+  const fence = "`".repeat(length)
+  return `${fence}${language}\n${text}${text.endsWith("\n") ? "" : "\n"}${fence}\n`
+}
+
+function withinDirectory(directory, file) {
+  const relative = path.relative(directory, file)
+  return relative && !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`)
+}
 
 async function documentSource(input, client, sessionID, signal) {
   let target = input.trim()
   if ((target.startsWith('"') && target.endsWith('"')) || (target.startsWith("'") && target.endsWith("'"))) {
     target = target.slice(1, -1)
   }
-  if (!target || !documentExtensions.has(path.extname(target).toLowerCase())) {
-    throw new Error("Choose a Markdown or plain-text file (.md, .mdx, .markdown, .txt).")
-  }
+  const language = documentLanguage(target)
+  if (!language) throw new Error("Choose a supported text or config file. Credential files are excluded.")
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(target)) throw new Error("Use a local file path.")
   if (target.startsWith("~/")) target = path.join(os.homedir(), target.slice(2))
-  const session = await client.session.get({ sessionID }, { signal })
-  const directory = session.location?.directory
-  if (!path.isAbsolute(target) && !directory) throw new Error("Can't determine the current session's working directory.")
-  const filePath = path.isAbsolute(target) ? path.normalize(target) : path.resolve(directory, target)
+  const filePath = path.isAbsolute(target)
+    ? path.normalize(target)
+    : path.resolve(await sessionDirectory(client, sessionID, signal), target)
   try {
     const info = await stat(filePath)
     if (!info.isFile()) throw new Error("The target is not a file.")
@@ -43,7 +81,7 @@ async function documentSource(input, client, sessionID, signal) {
       throw new Error("Use a UTF-8 text file.")
     }
     return {
-      text, filePath,
+      text: documentSnapshot(text, language), filePath,
       sourceHash: createHash("sha256").update(bytes).digest("hex"),
       snapshot: path.join("source", path.basename(filePath)),
     }
@@ -373,6 +411,32 @@ export function createReviewCommand(context, options = {}) {
     return texts.find(text => text.id === chosen)
   })
 
+  const file = (query = "") => start(async ({ sessionID, signal }) => {
+    const directory = await sessionDirectory(context.client, sessionID, signal)
+    const { location, data } = await context.client.file.find(
+      { query: query.trim(), type: "file", limit: 200, location: { directory } }, { signal },
+    )
+    if (signal.aborted) return
+    const options = data.flatMap(entry => {
+      if (entry.type !== "file" || path.isAbsolute(entry.path) || !documentLanguage(entry.path)) return []
+      const value = path.resolve(location.directory, entry.path)
+      if (!withinDirectory(directory, value)) return []
+      return [{ title: entry.path, value, description: path.dirname(entry.path) }]
+    })
+    if (!options.length) {
+      notice("No eligible text or config files found in this session's directory.")
+      return
+    }
+    const chosen = await context.ui.dialog.select({ title: "Annotate file", options })
+    if (chosen === undefined || signal.aborted) return
+    // The search result is a relative name, but a symlink can still leave the tree.
+    const [root, resolved] = await Promise.all([realpath(directory), realpath(chosen)])
+    if (!withinDirectory(root, resolved) || !documentLanguage(resolved)) {
+      throw new Error("Choose a supported text or config file inside this session's directory.")
+    }
+    return documentSource(chosen, context.client, sessionID, signal)
+  })
+
   const annotateSelection = () => start(async ({ sessionID, signal }) => {
     const selected = selection?.sessionID === sessionID ? selection.text : ""
     const needle = compact(selected)
@@ -385,7 +449,7 @@ export function createReviewCommand(context, options = {}) {
   })
 
   return {
-    run, auto, pick, selection: annotateSelection, webReady: web.ready,
+    run, auto, pick, file, selection: annotateSelection, webReady: web.ready,
     dispose() {
       context.renderer.off("selection", remember)
       disposed = true
