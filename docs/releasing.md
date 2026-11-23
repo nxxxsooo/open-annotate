@@ -1,5 +1,23 @@
 # Releasing
 
+## 0.19.0 — Annotate files — 2026-11-23
+
+Mingjian tried `/annotate-file` in a real OpenCode session and confirmed “works,
+ship.” The command uses OpenCode's `@` file search to pick text and config files
+in the current session directory. Browser protocol remains 10.
+
+| Surface | Verified state |
+|---|---|
+| Source | [PR #12](https://github.com/nxxxsooo/opencode-annotate/pull/12), source `ddcf616`, merged/tagged commit `623a2ba58712f9ad43d1532c8f1d44935f84c03e` (`v0.19.0`). |
+| Local checks | Native reviewer build, formatting/Clippy and 403 Rust tests, `npm run check` (105 Node tests and a 64-entry host-only pack dry-run), and 23 isolated OpenCode smoke scenarios passed. |
+| CI | [PR run `45154937114`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45154937114) and [main run `45155888691`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45155888691) passed all five native targets, the Safari build, and package checks. |
+| Publish / GitHub Release | [Trusted publishing run `45156601992`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45156601992) passed; [GitHub Release v0.19.0](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.19.0) is public. |
+| Registry | npm `@nxxxsooo/opencode-annotate@0.19.0` is `latest`. The downloaded archive has 68 entries, matching SHA-512 integrity and `gitHead` `623a2ba`, package and extension version 0.19.0, protocol 10, and all five native executables. All 23 isolated smoke scenarios also passed with the published plugin and reviewer. |
+| Maintainer install | `opencode plugin list` resolves the same local checkout, fast-forwarded to the tagged `main` commit before this docs-only receipt. The rebuilt darwin-arm64 reviewer reports 0.19.0. Plugin configuration was left unchanged, and the merged feature branch was deleted locally and remotely. |
+
+The smoke tests did not resume a live model turn or exercise the installed
+Safari UI or the maintainer's daily Chrome profile.
+
 ## 0.18.0 — Select page areas — 2026-11-20
 
 Prepared from `feat/browser-area-select` on top of 0.17.1. Mingjian dev-tested
