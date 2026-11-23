@@ -1,15 +1,18 @@
 //! Opt-in, local-only Kitty artwork. No capability queries, environment guesses of support,
 //! Picker constructors (which can mutate tmux), or out-of-band image drawing.
 
+use std::cell::Cell;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 use std::io::Write;
+use std::num::NonZeroU16;
 
 use anyhow::{Context, Result};
-use image::{DynamicImage, ImageReader, RgbaImage, imageops};
+use image::{ImageReader, RgbaImage, imageops};
+use ratatui::buffer::{Buffer, CellDiffOption};
 use ratatui::crossterm::terminal::{WindowSize, window_size};
-use ratatui::layout::Size;
-use ratatui_image::protocol::{Protocol, kitty::Kitty};
+use ratatui::layout::{Rect, Size};
+use ratatui::style::Color;
 
 use crate::config::UiConfig;
 
@@ -17,9 +20,73 @@ pub(crate) const FILES: [&str; 4] =
     ["emoji_thumbsup_v2.png", "emoji_typing.png", "emoji_done.png", "emoji_get_v3.png"];
 
 pub(crate) struct ToolbarImages {
-    pub(crate) protocols: [Protocol; 4],
+    pub(crate) artwork: [ToolbarImage; 4],
     pub(crate) size: Size,
-    ids: [u32; 4],
+}
+
+pub(crate) struct ToolbarImage {
+    id: u32,
+    fg: Color,
+    id_mark: char,
+    transmit: Cell<Option<String>>,
+}
+
+const PLACEHOLDER: char = '\u{10EEEE}';
+// The first 65 entries of Kitty's rowcolumn-diacritics.txt: row/column zero,
+// and the high ID byte (0..=64) allowed by the toolbar's ID namespace.
+const DIACRITICS: &str = "\
+    \u{305}\u{30D}\u{30E}\u{310}\u{312}\u{33D}\u{33E}\u{33F}\
+    \u{346}\u{34A}\u{34B}\u{34C}\u{350}\u{351}\u{352}\u{357}\
+    \u{35B}\u{363}\u{364}\u{365}\u{366}\u{367}\u{368}\u{369}\
+    \u{36A}\u{36B}\u{36C}\u{36D}\u{36E}\u{36F}\u{483}\u{484}\
+    \u{485}\u{486}\u{487}\u{592}\u{593}\u{594}\u{595}\u{597}\
+    \u{598}\u{599}\u{59C}\u{59D}\u{59E}\u{59F}\u{5A0}\u{5A1}\
+    \u{5A8}\u{5A9}\u{5AB}\u{5AC}\u{5AF}\u{5C4}\u{610}\u{611}\
+    \u{612}\u{613}\u{614}\u{615}\u{616}\u{617}\u{657}\u{658}\u{659}";
+
+impl ToolbarImage {
+    fn new(canvas: &RgbaImage, size: Size, id: u32) -> Result<Self> {
+        use std::fmt::Write as _;
+        let [high, r, g, b] = id.to_be_bytes();
+        let id_mark = DIACRITICS.chars().nth(usize::from(high)).context("toolbar image ID out of range")?;
+        // Kitty's chunk limit is 4096 base64 characters (3072 raw bytes).
+        // Keep the direct, uncompressed transport; tmux remains explicitly unsupported.
+        let chunks = canvas.as_raw().chunks(3072);
+        let mut transmit = String::new();
+        let chunk_count = chunks.len();
+        for (i, chunk) in chunks.enumerate() {
+            transmit.push_str("\x1b_Gq=2,");
+            if i == 0 {
+                // Don't let the terminal infer the placeholder grid from its cell pixels.
+                write!(
+                    transmit,
+                    "i={id},a=T,U=1,f=32,t=d,s={},v={},c={},r={},",
+                    canvas.width(),
+                    canvas.height(),
+                    size.width,
+                    size.height,
+                )?;
+            }
+            write!(transmit, "m={};{}\x1b\\", u8::from(i + 1 < chunk_count), crate::base64::encode(chunk))?;
+        }
+        Ok(Self { id, fg: Color::Rgb(r, g, b), id_mark, transmit: Cell::new(Some(transmit)) })
+    }
+
+    /// The draw caller only renders full, visible images. Prefix the upload once
+    /// to the first cell, then let Kitty infer successive columns on the same row.
+    pub(crate) fn render(&self, area: Rect, buf: &mut Buffer) {
+        for x in area.left()..area.right() {
+            let Some(cell) = buf.cell_mut((x, area.top())) else { continue };
+            if x == area.left() {
+                let mut symbol = self.transmit.take().unwrap_or_default();
+                symbol.extend([PLACEHOLDER, '\u{305}', '\u{305}', self.id_mark]);
+                cell.set_symbol(&symbol);
+            } else {
+                cell.set_char(PLACEHOLDER);
+            }
+            cell.set_fg(self.fg).set_diff_option(CellDiffOption::ForcedWidth(NonZeroU16::MIN));
+        }
+    }
 }
 
 impl ToolbarImages {
@@ -55,7 +122,7 @@ impl ToolbarImages {
         // these IDs are ever deleted; do not issue Kitty's delete-all command.
         let base = (RandomState::new().hash_one(std::process::id()) as u32 & 0x3fff_ffff) + 1;
         let ids = [base, base + 1, base + 2, base + 3];
-        let mut protocols = Vec::with_capacity(FILES.len());
+        let mut images = Vec::with_capacity(FILES.len());
         for (file, id) in FILES.iter().zip(ids) {
             let path = directory.join(file);
             // Explicit PNG decoding, bounded before allocation; no format sniffing or
@@ -87,23 +154,16 @@ impl ToolbarImages {
                 i64::from((pixel_width - artwork.width()) / 2),
                 i64::from((pixel_height - artwork.height()) / 2),
             );
-            // No tmux wrapping or compression: compression support would need a query.
-            protocols.push(Protocol::Kitty(Kitty::new(
-                DynamicImage::ImageRgba8(canvas),
-                size,
-                id,
-                false,
-                false,
-            )?));
+            images.push(ToolbarImage::new(&canvas, size, id)?);
         }
-        let protocols = protocols.try_into().map_err(|_| anyhow::anyhow!("expected four toolbar images"))?;
-        Ok(Some(Self { protocols, size, ids }))
+        let artwork = images.try_into().map_err(|_| anyhow::anyhow!("expected four toolbar images"))?;
+        Ok(Some(Self { artwork, size }))
     }
 
     /// Placeholders disappear through Ratatui's normal diff on hide/move. Retain their
     /// virtual images for reuse during this app, then free only our IDs on every exit.
     pub(crate) fn cleanup(&self, writer: &mut impl Write) -> std::io::Result<()> {
-        for id in self.ids {
+        for ToolbarImage { id, .. } in &self.artwork {
             write!(writer, "\x1b_Ga=d,d=I,i={id},q=2;\x1b\\")?;
         }
         writer.flush()
@@ -317,7 +377,7 @@ pub(crate) mod tests {
         images.cleanup(&mut bytes).expect("cleanup");
         let output = String::from_utf8(bytes).expect("ANSI");
         assert_eq!(output.matches("\x1b_Ga=d,d=I,i=").count(), 4);
-        for id in images.ids {
+        for ToolbarImage { id, .. } in &images.artwork {
             assert!(output.contains(&format!("i={id},q=2;")));
         }
         assert!(!output.contains("d=A") && !output.contains("d=a"));

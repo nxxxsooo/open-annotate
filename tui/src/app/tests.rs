@@ -686,7 +686,10 @@ fn kitty_backend_emits_cached_pixel_payload_and_owned_cleanup() {
     use ratatui::layout::Rect;
     use ratatui::{TerminalOptions, Viewport};
 
-    let mut app = image_app();
+    let mut fixture = crate::toolbar_images::tests::Fixture::new();
+    fixture.ui.toolbar_image_cell_size = Some([19, 42]);
+    let mut app = app(Box::new(Discard));
+    app.toolbar_images = Some(std::rc::Rc::new(fixture.load()));
     // Fixed viewport avoids any size or cursor-position query, including on CI.
     let mut bytes = Vec::new();
     let mut terminal = Terminal::with_options(
@@ -710,27 +713,39 @@ fn kitty_backend_emits_cached_pixel_payload_and_owned_cleanup() {
         4,
         "one upload per cached image, never per frame or reselect"
     );
-    assert_eq!(output.matches("t=d,s=16,v=16").count(), 4, "one-row square RGBA canvases");
+    assert_eq!(output.matches("t=d,s=57,v=42").count(), 4, "one-row RGBA canvases");
     let mut payloads = Vec::<String>::new();
+    let mut uploads = Vec::new();
+    let mut deletes = Vec::new();
     for command in output.split("\x1b_G").skip(1) {
         let command = command.split_once("\x1b\\").expect("terminated APC").0;
         let (parameters, data) = command.split_once(';').expect("APC parameters");
+        let fields: Vec<_> = parameters.split(',').collect();
+        let id = || fields.iter().find_map(|field| field.strip_prefix("i=")).expect("image ID");
         if parameters.contains("a=T") {
+            for placement in ["U=1", "c=3", "r=1"] {
+                assert!(fields.contains(&placement), "missing {placement} in {parameters}");
+            }
+            uploads.push(id().parse::<u32>().expect("numeric image ID"));
             payloads.push(data.to_owned());
         } else if parameters.starts_with("q=2,m=") {
             payloads.last_mut().expect("continuation after upload").push_str(data);
+        } else if fields.contains(&"d=I") {
+            deletes.push(id().parse::<u32>().expect("numeric image ID"));
         }
     }
+    assert_eq!(uploads, deletes, "cleanup deletes the same four IDs used for placement");
+    assert!(uploads[0] != 0 && uploads.windows(2).all(|ids| ids[1] == ids[0] + 1));
     assert_eq!(payloads.len(), 4);
     for (index, payload) in payloads.iter().enumerate() {
         let generated = image::RgbaImage::from_fn(12, 12, |x, y| {
             image::Rgba([index as u8 * 50, x as u8 * 20, y as u8 * 20, 255])
         });
         let resized = image::DynamicImage::ImageRgba8(generated)
-            .resize(14, 14, image::imageops::FilterType::Lanczos3)
+            .resize(36, 36, image::imageops::FilterType::Lanczos3)
             .to_rgba8();
-        let mut canvas = image::RgbaImage::new(16, 16);
-        image::imageops::overlay(&mut canvas, &resized, 1, 1);
+        let mut canvas = image::RgbaImage::new(57, 42);
+        image::imageops::overlay(&mut canvas, &resized, 10, 3);
         assert_eq!(
             *payload,
             crate::base64::encode(canvas.as_raw()),

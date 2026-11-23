@@ -341,8 +341,8 @@ impl App {
         let rect = rect.intersection(doc);
         frame.render_widget(Clear, rect);
         frame.buffer_mut().set_style(rect, Style::new().bg(palette().toolbar_bg));
-        for (((label, tool), item), protocol) in
-            labels.iter().zip(TOOLBAR.iter()).zip(items.iter_mut()).zip(&images.protocols)
+        for (((label, tool), item), artwork) in
+            labels.iter().zip(TOOLBAR.iter()).zip(items.iter_mut()).zip(&images.artwork)
         {
             if item.is_empty() {
                 continue;
@@ -354,7 +354,7 @@ impl App {
                 continue;
             }
             let image = Rect::new(item.x, item.y, images.size.width, images.size.height);
-            frame.render_widget(ratatui_image::Image::new(protocol), image);
+            artwork.render(image, frame.buffer_mut());
             let style = Style::new().fg(tool_accent(tool.3)).bg(palette().toolbar_bg).bold();
             frame.buffer_mut().set_span(
                 image.right() + 1,

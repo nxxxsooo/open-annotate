@@ -158,6 +158,9 @@ multiplexer settings. Unknown transports still require your own verification. Di
 removing all three `toolbar_image*` keys if your terminal cannot display it. Restart after
 changing font/cell pixel size. A configured cell-size override takes precedence and skips
 the ioctl; measure at the actual display's DPI, including through any PTY proxy.
+Cell pixels determine the artwork canvas; the Kitty virtual placement declares its
+column count and one-row height explicitly so the placeholder grid does not depend on
+the terminal or PTY proxy reporting the same pixel dimensions.
 
 Artwork is approximately square, centered at 85% of one cell row's height, with a bold,
 action-colored key beside each
