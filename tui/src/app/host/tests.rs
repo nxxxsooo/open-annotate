@@ -81,40 +81,35 @@ fn a_send_with_nothing_to_send_stays_open() {
 }
 
 #[test]
-fn quit_with_notes_hands_them_back_and_without_notes_just_quits() {
+fn hosted_quit_without_notes_closes_without_send_intent() {
     let (root, mut app, _delivery) = file_app("host-quit");
     let intent = hosted(&mut app, &root);
     press(&mut app, 'q');
     assert!(app.quit && !intent.exists(), "nothing to send, so no intent");
+}
 
-    let (root, mut app, _delivery) = file_app("host-quit-notes");
+#[test]
+fn hosted_quit_with_notes_writes_send_intent() {
+    let (root, mut app, delivery) = file_app("host-quit-notes");
     let intent = hosted(&mut app, &root);
     app.add_block_annotation(0, Kind::Comment, "x".to_owned()).expect("annotation");
+    assert!(footer(&mut app).contains("q send · ctrl+c leave"));
     press(&mut app, 'q');
     assert!(app.quit && handed_back(&intent));
+    assert!(delivery.calls.borrow().is_empty(), "only the host delivers");
+    assert_eq!(app.send_count(), 1, "the note stays pending for the host's export");
 }
 
 #[test]
-fn explicit_host_send_keeps_quit_separate_even_with_notes() {
-    let (root, mut app, _delivery) = file_app("host-explicit");
-    let intent = hosted(&mut app, &root);
-    app.explicit_host_send = true;
-    app.add_block_annotation(0, Kind::Comment, "x".to_owned()).expect("annotation");
-    assert!(footer(&mut app).contains("E send · q quit"));
-    press(&mut app, 'q');
-    assert!(app.quit && !intent.exists());
-    assert_eq!(app.send_count(), 1, "quit did not deliver the note");
-}
-
-#[test]
-fn interrupt_leaves_without_sending_or_asking() {
-    let (root, mut app, _delivery) = file_app("host-interrupt");
+fn hosted_interrupt_with_notes_closes_without_send_intent_or_confirmation() {
+    let (root, mut app, delivery) = file_app("host-interrupt");
     let intent = hosted(&mut app, &root);
     app.add_block_annotation(0, Kind::Comment, "x".to_owned()).expect("annotation");
     ctrl(&mut app, 'c');
     assert!(app.quit, "the host decides what to do with the notes");
     assert_ne!(app.mode, Mode::ConfirmQuit);
     assert!(!intent.exists());
+    assert!(delivery.calls.borrow().is_empty());
 }
 
 #[test]

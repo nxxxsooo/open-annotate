@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import { mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { herdrCommand, readHerdrAgent, resolveHerdrConversation } from "./herdr.mjs"
+import { herdrCommand, readHerdrAgent, recordHerdrOutcome, resolveHerdrConversation } from "./herdr.mjs"
 import { defaultInboxRoot } from "./inbox.mjs"
 
 export function annotateSlash(text) {
@@ -48,43 +48,54 @@ async function claimTurn(inboxRoot, conversationId, count) {
 
 export async function interceptAnnotateSlash(payload, {
   env = process.env, readAgent = readHerdrAgent, command = herdrCommand, launch = start,
-  inboxRoot = defaultInboxRoot(),
+  inboxRoot = defaultInboxRoot(), record = recordHerdrOutcome,
 } = {}) {
   const argument = annotateSlash(payload.lastUserInput)
+  if (argument === undefined) return false
+  const decline = async reason => {
+    await record(payload.conversationId, `slash not intercepted: ${reason}`)
+    return false
+  }
   const { HERDR_ENV, HERDR_PANE_ID: pane, HERDR_SOCKET_PATH: socket, HERDR_BIN_PATH: bin = "herdr" } = env
-  if (argument === undefined || payload.invocationNum !== 0 || !Number.isSafeInteger(payload.initialNumSteps) ||
-      payload.initialNumSteps < 1 || !payload.conversationId ||
-      HERDR_ENV !== "1" || !pane || !socket) return false
+  if (payload.invocationNum !== 0 || !Number.isSafeInteger(payload.initialNumSteps) ||
+      payload.initialNumSteps < 1 || !payload.conversationId) {
+    return decline(`payload invocationNum=${payload.invocationNum} initialNumSteps=${payload.initialNumSteps}`)
+  }
+  if (HERDR_ENV !== "1" || !pane || !socket) return decline("not in a Herdr pane")
 
   try {
     const [agent, pluginList] = await Promise.all([
       readAgent(bin, pane, 200),
       command(bin, ["plugin", "list", "--json"], 200),
     ])
-    if (agent.agent !== "agy" || !agent.focused || !agent.agent_session ||
-        resolveHerdrConversation(agent).conversationId !== payload.conversationId) return false
+    if (agent.agent !== "agy") return decline(`pane agent is ${agent.agent}`)
+    if (!agent.focused) return decline("AGY pane not focused")
+    if (!agent.agent_session) return decline("Herdr reports no AGY session")
+    if (resolveHerdrConversation(agent).conversationId !== payload.conversationId) {
+      return decline("Herdr session does not match the conversation")
+    }
     const plugin = pluginList?.plugins?.find(plugin => plugin.plugin_id === "annotate" && plugin.enabled)
     const popup = plugin?.panes?.find(pane => pane.id === "agy-popup" && pane.placement === "popup")
-    if (!popup) return false
+    if (!popup) return decline("annotate plugin has no agy-popup entrypoint")
     const [executable, namespace, entrypoint] = popup.command ?? []
     const binary = namespace === "herdr" && entrypoint === "hosted-pane" && path.isAbsolute(executable)
       ? executable : undefined
     let document
     if (argument !== null) {
-      if (!path.isAbsolute(payload.cwd ?? "")) return false
+      if (!path.isAbsolute(payload.cwd ?? "")) return decline("relative cwd")
       document = path.resolve(payload.cwd, argument)
-      if (!(await stat(document)).isFile()) return false
+      if (!(await stat(document)).isFile()) return decline("document is not a file")
     }
     const release = await claimTurn(inboxRoot, payload.conversationId, payload.initialNumSteps)
-    if (!release) return true
+    if (!release) return "replayed"
     let launched = false
     try {
       launched = await launch({ pane, conversationId: payload.conversationId, document, binary, env })
-      return launched
+      return launched ? "opened" : decline("popup launcher failed to start")
     } finally {
       if (!launched) await release()
     }
-  } catch {
-    return false
+  } catch (err) {
+    return decline(err.message)
   }
 }

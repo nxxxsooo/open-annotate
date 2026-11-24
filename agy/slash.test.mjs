@@ -27,15 +27,23 @@ test("only terminates the initial invocation after handing off the verified pane
   const inboxRoot = await mkdtemp(path.join(os.tmpdir(), "annotate-slash-test-"))
   t.after(() => rm(inboxRoot, { force: true, recursive: true }))
   const calls = []
+  const declined = []
   const options = { env, inboxRoot, readAgent: async () => agent, command: async () => ({ plugins: [plugin] }),
-    launch: async captured => { calls.push(captured); return true } }
+    launch: async captured => { calls.push(captured); return true },
+    record: async (_, reason) => { declined.push(reason) } }
   const intercept = p => interceptAnnotateSlash(p, options)
-  assert.deepEqual(await handlePreInvocation(payload, { intercept }), { terminationBehavior: "terminate" })
+  const opened = await handlePreInvocation(payload, { intercept })
+  assert.equal(opened.terminationBehavior, "terminate")
+  assert.equal(opened.injectSteps.length, 1, "AGY needs a step after the input to leave Working…")
+  assert.equal(opened.injectSteps[0].systemMessage.systemMessage, "", "the model never reads the UI step")
+  assert.match(opened.injectSteps[0].systemMessage.metadata.user_markdown, /Annotate opened/)
   assert.deepEqual(calls.shift(), { pane, conversationId, document: undefined, binary: undefined, env })
-  assert.equal(await intercept(payload), true)
+  assert.equal(await intercept(payload), "replayed")
+  assert.deepEqual(await handlePreInvocation(payload, { intercept }), { terminationBehavior: "terminate" },
+    "a replayed invocation adds no second UI step")
   assert.deepEqual(calls, [], "a repeated hook must not open the same turn again")
   const cwd = fileURLToPath(new URL("../", import.meta.url))
-  assert.equal(await intercept({ ...payload, initialNumSteps: 2, cwd, lastUserInput: '/annotate "README.md"' }), true)
+  assert.equal(await intercept({ ...payload, initialNumSteps: 2, cwd, lastUserInput: '/annotate "README.md"' }), "opened")
   assert.equal(calls.shift().document, fileURLToPath(new URL("../README.md", import.meta.url)))
   assert.equal(await intercept({ ...payload, invocationNum: 1 }), false)
   assert.equal(await intercept({ ...payload, cwd, lastUserInput: "/annotate missing.md" }), false)
@@ -44,9 +52,11 @@ test("only terminates the initial invocation after handing off the verified pane
   assert.equal(await interceptAnnotateSlash({ ...payload, conversationId: "different" }, options), false)
   assert.equal(await interceptAnnotateSlash(payload, { ...options, command: async () => ({ plugins: [] }) }), false)
   assert.deepEqual(calls, [])
+  assert.ok(declined.includes("slash not intercepted: AGY pane not focused"), "a declined slash records why")
+  assert.equal(declined.length, 6)
   const failed = { ...payload, initialNumSteps: 3 }
   assert.equal(await interceptAnnotateSlash(failed, { ...options, launch: async () => false }), false)
-  assert.equal(await intercept(failed), true, "failed spawn releases the claim")
+  assert.equal(await intercept(failed), "opened", "failed spawn releases the claim")
 })
 
 test("a terminated local slash turn does not restart the model or consume queued notes", async t => {

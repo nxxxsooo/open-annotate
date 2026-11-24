@@ -13,7 +13,7 @@ import { enqueueAnnotations, listPendingBatches } from "./inbox.mjs"
 import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
 import { resolveTuiBinary } from "../tui/binary.mjs"
-import { captureHerdrConversation, deliverHerdrReview, focusedPane, herdrCommand, readHerdrAgent } from "./herdr.mjs"
+import { captureHerdrConversation, deliverHerdrReview, focusedPane, herdrCommand, readHerdrAgent, recordHerdrOutcome } from "./herdr.mjs"
 
 const execute = promisify(execFile)
 
@@ -180,20 +180,29 @@ async function openTuiWindow(directory, title) {
   }
 }
 
+export function herdrTuiPlacement(pane) {
+  // Herdr overlays belong to the active pane; --target-pane is split-only. The
+  // model often finishes after Mingjian has moved on, so never steal focus then.
+  return pane.focused
+    ? ["--placement", "overlay", "--focus"]
+    : ["--placement", "split", "--target-pane", pane.pane_id, "--direction", "right", "--no-focus"]
+}
+
 async function openHerdrTui({ bin, pane }, directory) {
-  // Herdr overlays belong to the active pane; --target-pane is split-only.
-  if (!pane.focused) throw new Error("Focus the AGY pane in Herdr and retry /annotate.")
   try {
     const { stdout } = await execute(bin, [
       "plugin", "pane", "open", "--plugin", "annotate", "--entrypoint", "agy",
-      "--placement", "overlay",
-      "--focus", "--cwd", directory, "--env", `ANNOTATE_AGY_REVIEW_DIR=${directory}`,
+      ...herdrTuiPlacement(pane),
+      "--cwd", directory, "--env", `ANNOTATE_AGY_REVIEW_DIR=${directory}`,
     ], { timeout: 5000 })
     const opened = JSON.parse(stdout).result?.plugin_pane?.pane
     if (!opened?.pane_id) throw new Error("Herdr did not return the opened pane ID.")
     if (opened.tab_id !== pane.tab_id) {
       await execute(bin, ["pane", "close", opened.pane_id], { timeout: 2000 })
       throw new Error("Herdr placed the overlay outside the AGY tab. Focus the AGY tab and try again.")
+    }
+    if (!pane.focused) {
+      await herdrCommand(bin, ["notification", "show", "Annotate", "--body", "Review opened beside the AGY pane."]).catch(() => {})
     }
     return opened.pane_id
   } catch (err) {
@@ -298,8 +307,10 @@ async function cmdHerdrReview(options, shortcut) {
     }
     const session = { conversationId: captured.conversationId, title: `AGY ${captured.conversationId.slice(0, 8)}` }
     const status = await reviewTui(shortcut?.document, { session, binary, opener: { kind: "popup" }, captured })
+    await recordHerdrOutcome(captured.conversationId, status)
     if (status) await herdrCommand(bin, ["notification", "show", "Annotate", "--body", status]).catch(() => {})
   } catch (err) {
+    await recordHerdrOutcome(shortcut?.conversationId, `error: ${err.message}`)
     await herdrCommand(bin, ["notification", "show", "Annotate", "--body", err.message]).catch(() => {})
     throw err
   }
@@ -351,7 +362,6 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
       PLANNOTATOR_DATA_DIR: dataDir,
       PLANNOTATOR_FEEDBACK_HISTORY: "0",
       PLANNOTATOR_TUI_SEND_INTENT: intentPath,
-      PLANNOTATOR_TUI_EXPLICIT_SEND: "1",
     }
     if (themed.PLANNOTATOR_TUI_CONFIG) env.PLANNOTATOR_TUI_CONFIG = themed.PLANNOTATOR_TUI_CONFIG
 

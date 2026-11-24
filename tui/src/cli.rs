@@ -396,7 +396,6 @@ pub(crate) fn run_ui(build: impl FnOnce(usize) -> Result<App>) -> Result<()> {
             app.toolbar_images.clone_from(&toolbar_images);
             app.prompts = config.prompts;
             app.send_intent = crate::app::host::send_intent();
-            app.explicit_host_send = std::env::var("PLANNOTATOR_TUI_EXPLICIT_SEND").as_deref() == Ok("1");
             app.input_source = crate::app::input_source::InputSource::from_env();
             event_loop(&mut terminal, app)
         })

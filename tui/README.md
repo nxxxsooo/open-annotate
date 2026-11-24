@@ -133,8 +133,8 @@ the reviewer, so it does not use this route.
 
 For AGY, the `agy-popup` pane runs `herdr hosted-pane` on a private Markdown
 snapshot. The `agy` pane runs `agy-annotate tui-pane` for the skill fallback.
-Keep the AGY pane focused while the overlay opens. Only **Send** submits
-feedback; `q` and `Ctrl+C` close without sending.
+Keep the AGY pane focused while the popup opens. `q` sends pending notes and
+closes; with no notes it just closes. `Ctrl+C` closes without sending.
 
 
 ## Local image-toolbar trial

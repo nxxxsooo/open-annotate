@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- In AGY reviews, `q` sends pending notes and closes, matching OpenCode.
+  With no notes, `q` just closes. `Ctrl+C` still closes without sending.
+- `/annotate` in a Herdr AGY pane no longer leaves AGY showing `Working…`
+  after the review opens, so Send delivers right away instead of queueing.
+- Model-invoked AGY reviews open in a split without stealing focus when the AGY
+  pane is unfocused.
+- Declined AGY slash interceptions and popup outcomes are logged to
+  `~/.local/share/opencode-annotate/agy-review.log`.
+
 ## 0.20.0 — AGY reviews in Herdr
 
 - In a configured AGY pane, run `/annotate` or press `prefix+a` to open the
