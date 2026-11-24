@@ -341,8 +341,8 @@ impl App {
         let rect = rect.intersection(doc);
         frame.render_widget(Clear, rect);
         frame.buffer_mut().set_style(rect, Style::new().bg(palette().toolbar_bg));
-        for (((label, tool), item), protocol) in
-            labels.iter().zip(TOOLBAR.iter()).zip(items.iter_mut()).zip(&images.protocols)
+        for (((label, tool), item), artwork) in
+            labels.iter().zip(TOOLBAR.iter()).zip(items.iter_mut()).zip(&images.artwork)
         {
             if item.is_empty() {
                 continue;
@@ -354,7 +354,7 @@ impl App {
                 continue;
             }
             let image = Rect::new(item.x, item.y, images.size.width, images.size.height);
-            frame.render_widget(ratatui_image::Image::new(protocol), image);
+            artwork.render(image, frame.buffer_mut());
             let style = Style::new().fg(tool_accent(tool.3)).bg(palette().toolbar_bg).bold();
             frame.buffer_mut().set_span(
                 image.right() + 1,
@@ -562,12 +562,14 @@ impl App {
         );
         let tab = bare(self.keys.hint(Action::CycleFocus));
         // `send-and-close` is bound only in a reply review, so only a reply review names it.
-        // A hosted review with notes sends them on the way out, so `quit` names the send.
+        // A hosted review can let `quit` send, unless the host requires explicit Send.
         let hosted = self.is_hosted();
         let send = if hosted { None } else { key(Action::Send, "send") };
         let send_and_close =
             if self.is_file_review() || hosted { None } else { key(Action::SendAndClose, "send+quit") };
-        let leave = if hosted && self.send_count() > 0 {
+        let leave = if hosted && self.explicit_host_send {
+            [key(Action::Send, "send"), key(Action::Quit, "quit")]
+        } else if hosted && self.send_count() > 0 {
             [key(Action::Quit, "send"), key(Action::Interrupt, "leave")]
         } else {
             [key(Action::Quit, "quit"), None]

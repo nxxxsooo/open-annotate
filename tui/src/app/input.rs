@@ -79,7 +79,7 @@ impl App {
         };
         match action {
             Some(Action::QuickOpen) => return self.start_file_search(),
-            // A host delivers the notes: every send hands them back, and so does leaving.
+            // A host delivers the notes: send hands them back, and leaving follows its policy.
             Some(Action::Send | Action::SendAndClose) if self.is_hosted() => {
                 self.hand_back();
                 return Ok(());

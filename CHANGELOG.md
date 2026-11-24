@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.20.0 — AGY reviews in Herdr
+
+- In a configured AGY pane, run `/annotate` or press `prefix+a` to open the
+  native reviewer as a Herdr overlay without starting a model turn. **Send**
+  returns notes to the originating conversation; `q` and `Ctrl+C` do not send.
+- Configured Kitty toolbar images render at full size in Herdr instead of
+  showing only their upper-left portion.
+
 ## 0.19.0 — Annotate files
 
 - Choose **Annotate a file (TUI)** or run `/annotate-file [query]` to find text

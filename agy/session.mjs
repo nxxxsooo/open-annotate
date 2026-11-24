@@ -1,9 +1,7 @@
 import { spawnSync } from "node:child_process"
-import { DatabaseSync } from "node:sqlite"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { getAgySessionTitle } from "./receiver.mjs"
 
 export const agyConfigDir = () => path.join(os.homedir(), ".gemini/antigravity-cli")
 
@@ -31,6 +29,7 @@ export function getActiveAgySessions(baseDir = agyConfigDir()) {
 
   let db
   try {
+    const { DatabaseSync } = process.getBuiltinModule("node:sqlite")
     db = new DatabaseSync(dbPath, { open: true, readOnly: true })
   } catch {
     // Database might be temporarily locked or not exist

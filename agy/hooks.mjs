@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { dequeueAnnotations, defaultInboxRoot } from "./inbox.mjs"
 import { listTargets, registryRoot } from "../bridge/receiver.mjs"
+import { annotateSlash, interceptAnnotateSlash } from "./slash.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -43,9 +44,10 @@ export async function handleSessionStart(payload, { root = registryRoot(), inbox
   return {}
 }
 
-export async function handlePreInvocation(payload, { inboxRoot = defaultInboxRoot() } = {}) {
+export async function handlePreInvocation(payload, { inboxRoot = defaultInboxRoot(), intercept = interceptAnnotateSlash } = {}) {
   const conversationId = payload.conversationId
   if (!conversationId) return {}
+  if (await intercept(payload, { inboxRoot })) return { terminationBehavior: "terminate" }
 
   const dequeued = await dequeueAnnotations(conversationId, inboxRoot)
   if (!dequeued || !dequeued.combinedMarkdown.trim()) {
@@ -61,9 +63,14 @@ export async function handlePreInvocation(payload, { inboxRoot = defaultInboxRoo
   }
 }
 
-export async function handleStop(payload, { inboxRoot = defaultInboxRoot() } = {}) {
+export async function handleStop(payload, { inboxRoot = defaultInboxRoot(), env = process.env } = {}) {
   const conversationId = payload.conversationId
   if (!conversationId) return {}
+  // Draining here would restart the model immediately after slash interception.
+  if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID && payload.terminationReason === "TERMINAL_CUSTOM_HOOK" &&
+      annotateSlash(payload.lastUserInput) !== undefined) {
+    return {}
+  }
 
   const dequeued = await dequeueAnnotations(conversationId, inboxRoot)
   if (!dequeued || !dequeued.combinedMarkdown.trim()) {
