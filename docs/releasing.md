@@ -1,5 +1,24 @@
 # Releasing
 
+## 0.20.0 — AGY reviews in Herdr — 2026-11-24
+
+Mingjian tested `/annotate` in AGY inside Herdr, including the native overlay
+and full-size Kitty toolbar images, and approved the release. Browser protocol
+remains 10.
+
+| Surface | Verified state |
+|---|---|
+| Source | [PR #13](https://github.com/nxxxsooo/opencode-annotate/pull/13), source `d31e534`, merged/tagged commit `2497bd5a438b33947fd73aeb9b9ffbd9cfca4409` (`v0.20.0`). |
+| Local checks | Native reviewer build, formatting/Clippy, 405 Rust tests, `npm run check` (113 Node tests and a 68-entry host-only pack dry-run), and 23 isolated OpenCode smoke scenarios passed. |
+| CI | [PR run `45364882021`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45364882021) and [main run `45368768279`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45368768279) passed all five native targets, the Safari build, and package checks. The PR run initially timed out waiting for a hosted macOS arm64 runner; the failed jobs passed on retry without source changes. |
+| Publish / GitHub Release | [Trusted publishing run `45370257518`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45370257518) passed with signed provenance; [GitHub Release v0.20.0](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.20.0) is public. |
+| Registry | npm `@nxxxsooo/opencode-annotate@0.20.0` is `latest`. The downloaded archive has 72 entries, matching SHA-512 integrity and `gitHead` `2497bd5`, package and extension version 0.20.0, protocol 10, and all five native executables matching the CI artifacts byte for byte. All 23 isolated smoke scenarios passed using the published plugin and reviewer. |
+| Maintainer install | `opencode plugin list` still resolves the local main checkout. It was fast-forwarded to the tag before this docs-only receipt, and its rebuilt darwin-arm64 reviewer reports 0.20.0. |
+| AGY / Herdr | Backed up and repointed the AGY hooks, skill symlink, and linked Herdr manifest to the main checkout. Herdr reloaded config without a restart; the loaded commands, harmless hook invocations and AGY status verified the new paths. Removed the trial worktree and cache, the feature branch locally and remotely, and the local toolbar branch and pre-rebase backup ref. |
+
+Post-release smoke tests did not drive live AGY or Herdr panes, resume a model
+turn, or exercise the installed Safari UI or the daily Chrome profile.
+
 ## 0.19.0 — Annotate files — 2026-11-23
 
 Mingjian tried `/annotate-file` in a real OpenCode session and confirmed “works,
