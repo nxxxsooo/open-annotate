@@ -44,10 +44,21 @@ export async function handleSessionStart(payload, { root = registryRoot(), inbox
   return {}
 }
 
+const openedStep = {
+  systemMessage: {
+    systemMessage: "",
+    metadata: { user_markdown: "Annotate opened. `q` sends notes; `Ctrl+C` discards them." },
+  },
+}
+
 export async function handlePreInvocation(payload, { inboxRoot = defaultInboxRoot(), intercept = interceptAnnotateSlash } = {}) {
   const conversationId = payload.conversationId
   if (!conversationId) return {}
-  if (await intercept(payload, { inboxRoot })) return { terminationBehavior: "terminate" }
+  const intercepted = await intercept(payload, { inboxRoot })
+  // AGY's prompt ignores an idle update that adds no step after the user's
+  // input and keeps spinning, so the first termination shows one UI-only step.
+  if (intercepted === "opened") return { injectSteps: [openedStep], terminationBehavior: "terminate" }
+  if (intercepted) return { terminationBehavior: "terminate" }
 
   const dequeued = await dequeueAnnotations(conversationId, inboxRoot)
   if (!dequeued || !dequeued.combinedMarkdown.trim()) {

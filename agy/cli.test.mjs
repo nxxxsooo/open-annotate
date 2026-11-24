@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { finishTuiReview, getAdaptedThemeTokens, selectTuiOpener } from "./cli.mjs"
+import { finishTuiReview, getAdaptedThemeTokens, herdrTuiPlacement, selectTuiOpener } from "./cli.mjs"
 import { handlePreInvocation, handleStop } from "./hooks.mjs"
 import { enqueueAnnotations } from "./inbox.mjs"
 import { bundledBinary, resolveTuiBinary } from "../tui/binary.mjs"
@@ -23,6 +23,12 @@ test("Herdr opens an overlay only via a reachable calling pane; other calls keep
   assert.deepEqual(await selectTuiOpener({ env, exec: unavailable, tty: false }), { kind: "window" })
   assert.deepEqual(await selectTuiOpener({ env: {}, tty: true }), { kind: "tty" })
   assert.deepEqual(await selectTuiOpener({ env: { AGENT_TOOL_CALL: "1" }, tty: true }), { kind: "window" })
+})
+
+test("a focused AGY pane gets an overlay; an unfocused one gets a split without stealing focus", () => {
+  assert.deepEqual(herdrTuiPlacement({ pane_id: "w5:p2", focused: true }), ["--placement", "overlay", "--focus"])
+  assert.deepEqual(herdrTuiPlacement({ pane_id: "w5:p2", focused: false }),
+    ["--placement", "split", "--target-pane", "w5:p2", "--direction", "right", "--no-focus"])
 })
 
 test("only exact Send intent may export or enqueue; only one target hook gets the notes", async t => {

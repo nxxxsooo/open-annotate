@@ -18,7 +18,7 @@ Run the command:
 ```bash
 agy-annotate tui
 ```
-This opens the bundled reviewer in the configured Herdr overlay or in Ghostty/Terminal outside Herdr. Keep the command running until the user finishes. Only **Send** (`Ctrl+S` or the Send button) delivers feedback to the captured conversation; `q` and `Ctrl+C` close without sending. The command returns status only. Wait for delivered annotations before acting on them.
+This opens the bundled reviewer in Herdr or in Ghostty/Terminal outside Herdr. Keep the command running until the user finishes. **Send** (`Ctrl+S` or the Send button) delivers feedback to the captured conversation. `q` sends pending notes and closes; with no notes it just closes. `Ctrl+C` closes without sending. The command returns status only. Wait for delivered annotations before acting on them.
 
 ### 2. When the user specifies a document (e.g., `/annotate path/to/doc.md`):
 Run the command:

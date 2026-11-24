@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process"
+import { appendFile, mkdir } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { promisify } from "node:util"
 import { getActiveAgySessions } from "./session.mjs"
 import { enqueueAnnotations } from "./inbox.mjs"
@@ -11,6 +14,15 @@ export function focusedPane(env) {
   const context = JSON.parse(env.HERDR_PLUGIN_CONTEXT_JSON || "{}")
   if (!context.focused_pane_id) throw new Error("Focus an agent pane before opening Annotate.")
   return context.focused_pane_id
+}
+
+// Herdr notifications vanish; keep each popup outcome and declined slash
+// interception so a lost review can be traced afterwards.
+export async function recordHerdrOutcome(conversationId, status) {
+  const log = path.join(os.homedir(), ".local/share/opencode-annotate/agy-review.log")
+  const line = `${new Date().toISOString()}\t${conversationId ?? "-"}\t${String(status).replace(/\s+/g, " ")}\n`
+  await mkdir(path.dirname(log), { recursive: true, mode: 0o700 })
+    .then(() => appendFile(log, line, { mode: 0o600 })).catch(() => {})
 }
 
 export async function herdrCommand(bin, args, timeout = 5000) {

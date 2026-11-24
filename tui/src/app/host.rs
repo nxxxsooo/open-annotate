@@ -38,9 +38,9 @@ impl App {
         }
     }
 
-    /// Hosts that require an explicit Send treat `quit` like `interrupt`.
+    /// Quit hands pending notes to the host, or just closes an empty review.
     pub(super) fn leave_hosted(&mut self) {
-        if self.explicit_host_send || self.send_count() == 0 {
+        if self.send_count() == 0 {
             self.quit = true;
         } else {
             self.hand_back();
@@ -49,12 +49,7 @@ impl App {
 
     /// The header button's label: the key that hands the notes back.
     pub(super) fn hosted_send_label(&self) -> String {
-        let key = if self.explicit_host_send {
-            [Action::Send, Action::SendAndClose]
-        } else {
-            [Action::Quit, Action::Send]
-        }
-        .map(|action| self.keys.hint(action));
+        let key = [Action::Quit, Action::Send].map(|action| self.keys.hint(action));
         match key.iter().find(|key| !key.is_empty()) {
             Some(key) => format!("Send {} back ({key})", self.send_count()),
             None => format!("Send {} back", self.send_count()),
