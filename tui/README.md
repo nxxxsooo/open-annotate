@@ -74,7 +74,7 @@ title = "Annotate"
 placement = "overlay"
 command = ["/absolute/path/to/annotate-tui", "herdr", "pane"]
 
-# Optional: AGY /annotate overlay. Install agy-annotate and use its absolute path.
+# Optional: AGY overlay. Use absolute paths from the same Annotate installation.
 [[panes]]
 id = "agy"
 title = "Annotate AGY"
@@ -96,6 +96,9 @@ contexts = ["pane"]
 command = ["/absolute/path/to/agy-annotate", "herdr-review", "--binary", "/absolute/path/to/annotate-tui"]
 ```
 
+For a built macOS checkout, use its executable `agy/cli.mjs` and the
+native `tui/bin/darwin-arm64/annotate-tui` (or `darwin-x64` on Intel).
+
 Add this to Herdr's `config.toml` and reload the server configuration:
 
 ```toml
@@ -112,9 +115,10 @@ does not accept `popup` as a `--placement` CLI override. Send rechecks the AGY
 conversation before starting a turn in an idle/done pane or queuing to the AGY
 hooks while Herdr reports it is working. A blocked, unknown, or changed
 destination keeps the notes and shows the recovery path. With matching AGY
-`PreInvocation` and `Stop` hooks, `/annotate` and `/annotate <local-document>`
-also open this popup before the model runs. If the pane or conversation cannot
-be verified, the existing skill handles the command instead.
+hooks, `/annotate` and `/annotate <local-document>` also open this popup before
+the model runs. See the [AGY setup](../README.md#antigravity-agy-support) for
+`SessionStart`, `PreInvocation`, and `Stop`. If the pane or conversation
+cannot be verified, the skill handles the command instead.
 
 `herdr pane` is the plugin entrypoint: it reads the file, reply or terminal source
 passed by the launcher. Set `--placement overlay|split|tab|zoomed` on `herdr open`,
@@ -127,9 +131,10 @@ leaves notes pending for a manual retry and attempts an OSC 52 clipboard copy.
 OpenCode's `/annotate` clears the inherited `HERDR_*` variables before launching
 the reviewer, so it does not use this route.
 
-AGY uses the separate `agy` entrypoint to display a private Markdown snapshot.
-Keep the AGY pane focused while the overlay opens. It sends via the AGY
-lifecycle hooks, not `herdr agent prompt`.
+For AGY, the `agy-popup` pane runs `herdr hosted-pane` on a private Markdown
+snapshot. The `agy` pane runs `agy-annotate tui-pane` for the skill fallback.
+Keep the AGY pane focused while the overlay opens. Only **Send** submits
+feedback; `q` and `Ctrl+C` close without sending.
 
 
 ## Local image-toolbar trial
