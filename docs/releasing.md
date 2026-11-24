@@ -1,5 +1,26 @@
 # Releasing
 
+## 0.20.1 — Send AGY notes on quit — 2026-11-24
+
+Mingjian dev-tested the build in real AGY/Herdr on 2026-11-24, confirmed that
+sending reached the session, and approved shipment. The live test used the
+model-invoked path because the slash hook logged “Herdr reports no AGY session.”
+The hook-injected UI step is covered by unit tests, not a live run. The unfocused
+split was verified only in an isolated Herdr probe. Browser protocol remains 10.
+
+| Surface | Verified state |
+|---|---|
+| Source | [PR #14](https://github.com/nxxxsooo/opencode-annotate/pull/14), fix `69f2549`, release prep `9f61a91`, merged/tagged commit `2734be2e003fed988586af390f3aff604a0d4185` (`v0.20.1`). |
+| Local checks | Native reviewer build, formatting/Clippy, 405 Rust tests, `npm run check` (114 Node tests and a 68-entry host-only pack dry-run), and 23 isolated OpenCode smoke scenarios passed. |
+| CI | [PR run `45406052685`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45406052685) and [main run `45407175303`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45407175303) passed all five native targets, the Safari build, and package checks. |
+| Publish / GitHub Release | [Trusted publishing run `45408058117`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45408058117) passed with signed provenance; [GitHub Release v0.20.1](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.20.1) is public. |
+| Registry | npm `@nxxxsooo/opencode-annotate@0.20.1` is `latest`. The downloaded archive has 72 entries, matching SHA-512 integrity and `gitHead` `2734be2`, package and extension version 0.20.1, protocol 10, and all five native executables matching the publish artifacts byte for byte. All 23 isolated smoke scenarios passed using the published plugin and reviewer. |
+| Maintainer install | `main` was fast-forwarded to the tag before this docs-only receipt. `opencode plugin list` still resolves this checkout, and its rebuilt darwin-arm64 reviewer reports 0.20.1. |
+| AGY / Herdr | The three AGY hooks, skill symlink, and linked Herdr manifest still resolve this checkout. No config changes or live pane actions were needed. |
+
+Post-release smoke tests did not resume a model turn or exercise the daily Chrome
+profile or installed Safari UI.
+
 ## 0.20.0 — AGY reviews in Herdr — 2026-11-24
 
 Mingjian tested `/annotate` in AGY inside Herdr, including the native overlay
