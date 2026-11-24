@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.1 — Send AGY notes on quit
 
 - In AGY reviews, `q` sends pending notes and closes, matching OpenCode.
   With no notes, `q` just closes. `Ctrl+C` still closes without sending.
