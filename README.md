@@ -182,10 +182,10 @@ find the package under `npm root -g`) or a checkout with `npm run build:tui`:
    using the CLI and native reviewer from the same installation.
 
 **Send** (`Ctrl+S` or the Send button) returns feedback to the captured AGY
-conversation. The Herdr TUI starts a turn if AGY is idle or done, or queues
-feedback if AGY is working. Herdr.app queues feedback for the AGY lifecycle
-hooks. `q` sends pending notes and closes; with no notes it just closes.
-`Ctrl+C` closes without sending.
+conversation. Direct review in the Herdr TUI or Herdr.app starts a turn if AGY
+is idle or done, or queues feedback if AGY is working. The skill queues feedback
+for the AGY lifecycle hooks. `q` sends pending notes and closes; with no notes it
+just closes. `Ctrl+C` closes without sending.
 
 - **CLI Commands**:
   ```sh

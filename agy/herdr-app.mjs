@@ -140,16 +140,34 @@ export async function verifyHerdrAppConversation(opener, conversationId, {
     throw new Error("AGY terminal no longer matches the captured conversation")
   }
   const status = terminal.status
-  if (!["agy", "antigravity"].includes(status?.app) || !["idle", "done", "working"].includes(status.state)) {
-    throw new Error("hc reports AGY is blocked or its state is unknown")
+  const state = ["agy", "antigravity"].includes(status?.app) ? status.state : undefined
+  if (state === "blocked") throw new Error("AGY is blocked and needs input. Nothing was sent.")
+  if (!["idle", "done", "working"].includes(state)) {
+    throw new Error("AGY is not ready to receive feedback: hc could not determine its state. Nothing was sent.")
   }
-  return foreground.pid
+  return { pid: foreground.pid, state }
 }
 
 export async function deliverHerdrAppReview(opener, conversationId, pid, batch, {
-  verify = verifyHerdrAppConversation, enqueue = enqueueAnnotations,
+  verify = verifyHerdrAppConversation, enqueue = enqueueAnnotations, exec = execute,
 } = {}) {
-  await verify(opener, conversationId, { pid })
-  await enqueue(conversationId, batch)
-  return "Annotations queued for the captured AGY conversation. The lifecycle hook will deliver them."
+  const { state } = await verify(opener, conversationId, { pid })
+  if (state === "working") {
+    await enqueue(conversationId, batch)
+    return "Annotations queued for the captured AGY conversation. The lifecycle hook will deliver them."
+  }
+  const guard = state === "idle" ? ["--if", "idle"] : []
+  try {
+    // hc may wait up to a minute for a person's unfinished draft. Never
+    // retry or queue after an attempt: the text may already have gone in.
+    await exec("hc", ["send", ...guard, opener.parent, batch.markdown], { env: opener.env, timeout: 75_000 })
+  } catch (err) {
+    const kind = commandError(err)?.kind
+    if (kind === "blocked") throw new Error("AGY is blocked and needs input. Nothing was sent.")
+    if (["not_found", "finished", "status_mismatch"].includes(kind)) {
+      throw new Error("The AGY pane is no longer ready. Nothing was sent.")
+    }
+    throw new Error("Herdr did not confirm submission. Check the AGY conversation before retrying.")
+  }
+  return "Annotations submitted to AGY."
 }

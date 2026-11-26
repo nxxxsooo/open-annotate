@@ -86,7 +86,7 @@ export async function interceptAnnotateSlash(payload, {
       }
       const opener = await selectApp(env)
       if (!opener) return decline("Herdr.app unavailable or does not know the calling terminal")
-      const pid = await verifyApp(opener, payload.conversationId)
+      const { pid } = await verifyApp(opener, payload.conversationId)
       const document = await slashDocument(argument, payload.cwd)
       return await launchOnce({ conversationId: payload.conversationId, document, env, pid }, payload, {
         inboxRoot, launch, decline, record,

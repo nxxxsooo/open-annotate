@@ -115,7 +115,7 @@ test("Herdr.app slash verifies a foreground AGY conversation and claims the revi
     [{ verifyApp: (opener, id) => verify(opener, id, { snapshot: { ...terminal, foreground: { name: "node", pid: 123 } } }) }, /no.*live foreground AGY/],
     [{ verifyApp: (opener, id) => verify(opener, id, { sessions: () => [] }) }, /no unique conversation presence lock/],
     [{ verifyApp: (opener, id) => verify(opener, id, { sessions: () => [{ pid: 123, conversationId: "different" }] }) }, /no longer matches/],
-    [{ verifyApp: (opener, id) => verify(opener, id, { snapshot: { ...terminal, status: null } }) }, /state is unknown/],
+    [{ verifyApp: (opener, id) => verify(opener, id, { snapshot: { ...terminal, status: null } }) }, /could not determine its state/],
   ]
   for (const [overrides, reason] of declines) {
     assert.equal(await interceptAnnotateSlash(next, { ...options, ...overrides }), false)
@@ -125,15 +125,22 @@ test("Herdr.app slash verifies a foreground AGY conversation and claims the revi
   assert.equal(launches.length, 2)
 })
 
-test("Herdr.app slash feedback goes only to the verified inbox; blocked, switched and unknown targets retain it", async () => {
-  const batch = { batchID: "batch", markdown: "Review notes" }
+test("Herdr.app slash sends to idle or done AGY, queues while working, and refuses unsafe targets", async () => {
+  const batch = { batchID: "batch", markdown: "Review notes\n\n- Keep this line." }
+  const commands = []
   const queued = []
   const deliver = config => deliverHerdrAppReview(appOpener, conversationId, 123, batch, {
     verify: (opener, id, options) => verify(opener, id, { ...config, ...options }),
+    exec: async (bin, args, { env }) => {
+      assert.equal(env, appEnv)
+      commands.push([bin, ...args])
+    },
     enqueue: async (...args) => { queued.push(args) },
   })
-  for (const status of [null, { app: "agy", state: "blocked" }, { app: "not-agy", state: "idle" }]) {
-    await assert.rejects(deliver({ snapshot: { ...terminal, status } }), /blocked or its state is unknown/)
+  const snapshot = state => ({ ...terminal, status: { app: "antigravity", state } })
+  await assert.rejects(deliver({ snapshot: snapshot("blocked") }), /AGY is blocked and needs input. Nothing was sent./)
+  for (const status of [null, { app: "antigravity", state: "unknown" }, { app: "not-agy", state: "idle" }]) {
+    await assert.rejects(deliver({ snapshot: { ...terminal, status } }), /could not determine its state/)
   }
   await assert.rejects(deliver({ sessions: () => [{ pid: 123, conversationId: "different" }] }), /no longer matches/)
   await assert.rejects(deliver({
@@ -141,6 +148,38 @@ test("Herdr.app slash feedback goes only to the verified inbox; blocked, switche
     sessions: () => [{ conversationId, pid: 999 }],
   }), /no longer matches/)
   assert.deepEqual(queued, [])
-  assert.match(await deliver(), /queued/)
+  assert.deepEqual(commands, [])
+  assert.match(await deliver({ snapshot: snapshot("idle") }), /submitted/)
+  assert.match(await deliver({ snapshot: snapshot("done") }), /submitted/)
+  assert.deepEqual(queued, [])
+  assert.match(await deliver({ snapshot: snapshot("working") }), /queued/)
   assert.deepEqual(queued, [[conversationId, batch]])
+  assert.deepEqual(commands, [
+    ["hc", "send", "--if", "idle", appOpener.parent, batch.markdown],
+    ["hc", "send", appOpener.parent, batch.markdown],
+  ])
+})
+
+test("a failed Herdr.app send is never retried or queued", async () => {
+  const batch = { batchID: "batch", markdown: "Review notes" }
+  for (const [kind, message] of [
+    ["blocked", "AGY is blocked and needs input. Nothing was sent."],
+    ["not_found", "The AGY pane is no longer ready. Nothing was sent."],
+    ["finished", "The AGY pane is no longer ready. Nothing was sent."],
+    ["status_mismatch", "The AGY pane is no longer ready. Nothing was sent."],
+    [undefined, "Herdr did not confirm submission. Check the AGY conversation before retrying."],
+  ]) {
+    let attempts = 0
+    await assert.rejects(deliverHerdrAppReview(appOpener, conversationId, 123, batch, {
+      verify: async () => ({ pid: 123, state: "idle" }),
+      exec: async () => {
+        attempts++
+        const err = new Error("send failed")
+        if (kind) err.stderr = JSON.stringify({ error: { kind } })
+        throw err
+      },
+      enqueue: async () => assert.fail("attempted send must not enqueue"),
+    }), { message })
+    assert.equal(attempts, 1)
+  }
 })
