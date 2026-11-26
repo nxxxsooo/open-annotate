@@ -60,8 +60,9 @@ test("only terminates the initial invocation after handing off the verified pane
   const opened = await handlePreInvocation(payload, { intercept })
   assert.equal(opened.terminationBehavior, "terminate")
   assert.equal(opened.injectSteps.length, 1, "AGY needs a step after the input to leave Working…")
-  assert.equal(opened.injectSteps[0].systemMessage.systemMessage, "", "the model never reads the UI step")
-  assert.match(opened.injectSteps[0].systemMessage.metadata.user_markdown, /Annotate opened/)
+  assert.match(opened.injectSteps[0].systemMessage.systemMessage, /Annotate opened/)
+  assert.deepEqual(Object.keys(opened.injectSteps[0].systemMessage), ["systemMessage"],
+    "metadata made AGY's hook caller panic and drop the termination")
   assert.deepEqual(calls.shift(), { pane, conversationId, document: undefined, binary: undefined, env })
   assert.equal(await intercept(payload), "replayed")
   assert.deepEqual(await handlePreInvocation(payload, { intercept }), { terminationBehavior: "terminate" },

@@ -45,10 +45,12 @@ export async function handleSessionStart(payload, { root = registryRoot(), inbox
   return {}
 }
 
+// AGY's hook caller panicked ("cannot convert string to message") on this step
+// when it carried `metadata.user_markdown`, then dropped the whole result,
+// termination included, and ran the model. Keep the step to plain fields.
 const openedStep = {
   systemMessage: {
-    systemMessage: "",
-    metadata: { user_markdown: "Annotate opened. `q` sends notes; `Ctrl+C` discards them." },
+    systemMessage: "Annotate opened for the previous reply. Any feedback arrives as a user message.",
   },
 }
 
