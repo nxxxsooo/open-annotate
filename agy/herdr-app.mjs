@@ -17,7 +17,7 @@ const appResponseLimit = 1024 * 1024
 // The CLI is the app executable on macOS, so a headless AGY sandbox can deny
 // launching it. Talk to the already-running app using its CLI socket protocol.
 function execute(bin, args, options) {
-  if (bin !== "herdr-app") return exec(bin, args, options)
+  if (bin !== "herdr-app" || process.platform !== "darwin") return exec(bin, args, options)
   const { env, timeout } = options
   const [action, command, flag, terminal] = args
   const request = action === "do" && command === "terminal.peek" && flag === "--terminal"

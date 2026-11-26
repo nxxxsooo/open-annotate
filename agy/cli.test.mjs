@@ -64,7 +64,9 @@ test("reachable Herdr TUI takes precedence over Herdr.app, which takes precedenc
   assert.deepEqual(await selectTuiOpener({ env: appEnv, tty: false, exec: offline }), { kind: "window" })
 })
 
-test("Herdr.app placement uses the existing app socket without launching the app binary", async t => {
+test("Herdr.app placement uses the existing app socket without launching the app binary", {
+  skip: process.platform !== "darwin",
+}, async t => {
   const appHome = await mkdtemp(path.join(os.tmpdir(), "annotate-app-"))
   const requests = []
   const server = createServer({ allowHalfOpen: true }, socket => {
