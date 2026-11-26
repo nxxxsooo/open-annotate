@@ -14,6 +14,7 @@ import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
 import { resolveTuiBinary } from "../tui/binary.mjs"
 import { captureHerdrConversation, deliverHerdrReview, focusedPane, herdrCommand, readHerdrAgent, recordHerdrOutcome } from "./herdr.mjs"
+import { deliverHerdrAppReview, herdrAppTerminalGone, openHerdrAppTui, selectHerdrApp, verifyHerdrAppConversation } from "./herdr-app.mjs"
 
 const execute = promisify(execFile)
 
@@ -159,6 +160,8 @@ export async function selectTuiOpener({ env, tty, exec = execute }) {
       if (result?.pane?.pane_id && result.pane.tab_id) return { kind: "herdr", bin, pane: result.pane }
     }
   }
+  const app = await selectHerdrApp(env, exec)
+  if (app) return app
   const calledByAgent = Boolean(env.ANTIGRAVITY_CONVERSATION_ID || env.ANTIGRAVITY_AGENT || env.AGENT_TOOL_CALL)
   return { kind: tty && !calledByAgent ? "tty" : "window" }
 }
@@ -248,7 +251,7 @@ async function readOptional(file) {
   })
 }
 
-async function waitForTuiPane(directory, herdrPane) {
+export async function waitForTuiPane(directory, herdrPane, { exec = execute } = {}) {
   const deadline = Date.now() + 300_000
   while (Date.now() < deadline) {
     const result = await readOptional(path.join(directory, "done"))
@@ -256,9 +259,11 @@ async function waitForTuiPane(directory, herdrPane) {
     if (result !== null) throw new Error(result)
     if (herdrPane) {
       const { bin, id } = herdrPane
-      const missing = await execute(bin, ["pane", "get", id], { timeout: 2000 }).then(() => false, err => {
-        try { return JSON.parse(err.stderr).error?.code === "pane_not_found" } catch { return false }
-      })
+      const missing = herdrPane.kind === "herdr-app"
+        ? await herdrAppTerminalGone(herdrPane, exec)
+        : await exec(bin, ["pane", "get", id], { timeout: 2000 }).then(() => false, err => {
+          try { return JSON.parse(err.stderr).error?.code === "pane_not_found" } catch { return false }
+        })
       if (missing && await readOptional(path.join(directory, "done")) === null) return false
     }
     await wait(500)
@@ -316,7 +321,27 @@ async function cmdHerdrReview(options, shortcut) {
   }
 }
 
-async function reviewTui(targetPath, { session, binary, opener, captured }) {
+async function cmdHerdrAppSlash(conversationId, pid, document) {
+  try {
+    if (!conversationId || !Number.isSafeInteger(pid) || (document && !path.isAbsolute(document))) {
+      throw new Error("Invalid AGY Herdr.app slash launch.")
+    }
+    const opener = await selectHerdrApp(process.env)
+    if (!opener) throw new Error("Herdr.app no longer knows the AGY pane.")
+    await verifyHerdrAppConversation(opener, conversationId, { pid })
+    const session = { conversationId, title: `AGY ${conversationId.slice(0, 8)}` }
+    const status = await reviewTui(document, {
+      session, binary: path.resolve(resolveTuiBinary()), opener,
+      deliver: batch => deliverHerdrAppReview(opener, conversationId, pid, batch),
+    })
+    await recordHerdrOutcome(conversationId, `Herdr.app slash: ${status}`)
+  } catch (err) {
+    await recordHerdrOutcome(conversationId, `Herdr.app slash error: ${err.message}`)
+    throw err
+  }
+}
+
+async function reviewTui(targetPath, { session, binary, opener, captured, deliver }) {
   let sourceText = ""
   let snapshotName = "last-reply.md"
   let filePath = null
@@ -375,6 +400,7 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
     } else {
       await writeFile(path.join(tempDir, "request.json"), JSON.stringify(request), { mode: 0o600 })
       let herdrPane
+      let placement = opener.kind === "herdr" ? "overlay" : opener.kind
       if (captured) {
         const { bin } = captured
         const popupEnv = {
@@ -389,19 +415,24 @@ async function reviewTui(targetPath, { session, binary, opener, captured }) {
           ...Object.entries(popupEnv).flatMap(([key, value]) => ["--env", `${key}=${value}`]),
         ])
         if (result?.type !== "ok") throw new Error("The agy-popup entrypoint must declare placement = \"popup\".")
-      } else if (opener.kind === "herdr") herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
-      else await openTuiWindow(tempDir, session.title)
-      console.log(`Opened Annotate ${opener.kind === "herdr" ? "overlay" : opener.kind}. Waiting for Send or quit…`)
+      } else if (opener.kind === "herdr") {
+        herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
+      } else if (opener.kind === "herdr-app") {
+        herdrPane = await openHerdrAppTui(opener, tempDir, [process.execPath, fileURLToPath(import.meta.url), "tui-pane", tempDir])
+        placement = herdrPane.peek ? "peek in Herdr.app" : "in the AGY tab in Herdr.app"
+      } else await openTuiWindow(tempDir, session.title)
+      console.log(`Opened Annotate ${placement}. Waiting for Send or quit…`)
       if (!await waitForTuiPane(tempDir, herdrPane)) {
-        console.log(`Review pane closed without sending. Review files retained at ${tempDir}`)
-        return
+        const status = `Review pane closed without sending. Review files retained at ${tempDir}`
+        console.log(status)
+        return status
       }
     }
 
     const status = await finishTuiReview({
       intentPath,
       conversationId: session.conversationId,
-      deliver: captured && (batch => deliverHerdrReview(captured, batch)),
+      deliver: captured ? batch => deliverHerdrReview(captured, batch) : deliver,
       header: filePath
         ? `Annotations on document \`${filePath}\` (SHA-256: ${sourceHash}):`
         : `Annotations on latest assistant response in session "${session.title}":`,
@@ -441,6 +472,11 @@ async function main() {
     if (process.env.HERDR_ENV !== "1" || !pane || pane !== process.env.HERDR_PANE_ID ||
         !conversationId || (document && !path.isAbsolute(document))) throw new Error("Invalid AGY slash launch.")
     await cmdHerdrReview({ binary: binary || undefined }, { pane, conversationId, document })
+    return
+  }
+  if (command === "herdr-app-slash") {
+    const [, conversationId, pid, document] = args
+    await cmdHerdrAppSlash(conversationId, Number(pid), document)
     return
   }
   const options = {}

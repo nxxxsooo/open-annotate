@@ -3,7 +3,10 @@ import { mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { herdrCommand, readHerdrAgent, recordHerdrOutcome, resolveHerdrConversation } from "./herdr.mjs"
+import { inHerdrApp, selectHerdrApp, verifyHerdrAppConversation } from "./herdr-app.mjs"
 import { defaultInboxRoot } from "./inbox.mjs"
+
+const conversationIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 
 export function annotateSlash(text) {
   if (typeof text !== "string" || /[\r\n\0]/.test(text)) return undefined
@@ -20,9 +23,11 @@ export function annotateSlash(text) {
   return argument
 }
 
-function start({ pane, conversationId, document, binary, env }) {
+function start({ pane, conversationId, document, binary, env, pid }) {
   const cli = fileURLToPath(new URL("./cli.mjs", import.meta.url))
-  const args = [cli, "herdr-slash", pane, conversationId, binary ?? ""]
+  const args = pid === undefined
+    ? [cli, "herdr-slash", pane, conversationId, binary ?? ""]
+    : [cli, "herdr-app-slash", conversationId, String(pid)]
   if (document) args.push(document)
   const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", env })
   return new Promise(resolve => {
@@ -46,9 +51,17 @@ async function claimTurn(inboxRoot, conversationId, count) {
   }
 }
 
+async function wasClaimed(inboxRoot, conversationId, count) {
+  return stat(path.join(inboxRoot, conversationId, `.slash-${count}`)).then(
+    () => true,
+    err => { if (err.code === "ENOENT") return false; throw err },
+  )
+}
+
 export async function interceptAnnotateSlash(payload, {
   env = process.env, readAgent = readHerdrAgent, command = herdrCommand, launch = start,
   inboxRoot = defaultInboxRoot(), record = recordHerdrOutcome,
+  selectApp = selectHerdrApp, verifyApp = verifyHerdrAppConversation,
 } = {}) {
   const argument = annotateSlash(payload.lastUserInput)
   if (argument === undefined) return false
@@ -61,9 +74,24 @@ export async function interceptAnnotateSlash(payload, {
       payload.initialNumSteps < 1 || !payload.conversationId) {
     return decline(`payload invocationNum=${payload.invocationNum} initialNumSteps=${payload.initialNumSteps}`)
   }
-  if (HERDR_ENV !== "1" || !pane || !socket) return decline("not in a Herdr pane")
+  const useHerdrApp = !(HERDR_ENV === "1" && pane && socket) && inHerdrApp(env)
+  if (!useHerdrApp && (HERDR_ENV !== "1" || !pane || !socket)) return decline("not in a Herdr pane")
 
   try {
+    if (useHerdrApp) {
+      if (!conversationIdPattern.test(payload.conversationId)) return decline("invalid AGY conversation ID")
+      if (await wasClaimed(inboxRoot, payload.conversationId, payload.initialNumSteps)) {
+        await record(payload.conversationId, "Herdr.app slash replay ignored")
+        return "replayed"
+      }
+      const opener = await selectApp(env)
+      if (!opener) return decline("Herdr.app unavailable or does not know the calling terminal")
+      const pid = await verifyApp(opener, payload.conversationId)
+      const document = await slashDocument(argument, payload.cwd)
+      return await launchOnce({ conversationId: payload.conversationId, document, env, pid }, payload, {
+        inboxRoot, launch, decline, record,
+      })
+    }
     const [agent, pluginList] = await Promise.all([
       readAgent(bin, pane, 200),
       command(bin, ["plugin", "list", "--json"], 200),
@@ -80,22 +108,36 @@ export async function interceptAnnotateSlash(payload, {
     const [executable, namespace, entrypoint] = popup.command ?? []
     const binary = namespace === "herdr" && entrypoint === "hosted-pane" && path.isAbsolute(executable)
       ? executable : undefined
-    let document
-    if (argument !== null) {
-      if (!path.isAbsolute(payload.cwd ?? "")) return decline("relative cwd")
-      document = path.resolve(payload.cwd, argument)
-      if (!(await stat(document)).isFile()) return decline("document is not a file")
-    }
-    const release = await claimTurn(inboxRoot, payload.conversationId, payload.initialNumSteps)
-    if (!release) return "replayed"
-    let launched = false
-    try {
-      launched = await launch({ pane, conversationId: payload.conversationId, document, binary, env })
-      return launched ? "opened" : decline("popup launcher failed to start")
-    } finally {
-      if (!launched) await release()
-    }
+    const document = await slashDocument(argument, payload.cwd)
+    return await launchOnce({ pane, conversationId: payload.conversationId, document, binary, env }, payload, {
+      inboxRoot, launch, decline,
+    })
   } catch (err) {
     return decline(err.message)
+  }
+}
+
+async function slashDocument(argument, cwd) {
+  if (argument === null) return undefined
+  if (!path.isAbsolute(cwd ?? "")) throw new Error("relative cwd")
+  const document = path.resolve(cwd, argument)
+  if (!(await stat(document)).isFile()) throw new Error("document is not a file")
+  return document
+}
+
+async function launchOnce(review, payload, { inboxRoot, launch, decline, record }) {
+  const release = await claimTurn(inboxRoot, payload.conversationId, payload.initialNumSteps)
+  if (!release) {
+    await record?.(payload.conversationId, "Herdr.app slash replay ignored")
+    return "replayed"
+  }
+  let launched = false
+  try {
+    launched = await launch(review)
+    if (!launched) return decline("popup launcher failed to start")
+    await record?.(payload.conversationId, "Herdr.app slash reviewer launch claimed")
+    return "opened"
+  } finally {
+    if (!launched) await release()
   }
 }

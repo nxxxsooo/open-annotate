@@ -4,6 +4,7 @@ import path from "node:path"
 import { dequeueAnnotations, defaultInboxRoot } from "./inbox.mjs"
 import { listTargets, registryRoot } from "../bridge/receiver.mjs"
 import { annotateSlash, interceptAnnotateSlash } from "./slash.mjs"
+import { inHerdrApp } from "./herdr-app.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -78,7 +79,7 @@ export async function handleStop(payload, { inboxRoot = defaultInboxRoot(), env 
   const conversationId = payload.conversationId
   if (!conversationId) return {}
   // Draining here would restart the model immediately after slash interception.
-  if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID && payload.terminationReason === "TERMINAL_CUSTOM_HOOK" &&
+  if (((env.HERDR_ENV === "1" && env.HERDR_PANE_ID) || inHerdrApp(env)) && payload.terminationReason === "TERMINAL_CUSTOM_HOOK" &&
       annotateSlash(payload.lastUserInput) !== undefined) {
     return {}
   }
