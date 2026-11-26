@@ -3,7 +3,7 @@ import { mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { herdrCommand, readHerdrAgent, recordHerdrOutcome, resolveHerdrConversation } from "./herdr.mjs"
-import { herdrAppOpener, selectHerdrApp, verifyHerdrAppConversation } from "./herdr-app.mjs"
+import { appPlacement, herdrAppOpener, herdrAppSnapshot, verifyHerdrAppConversation } from "./herdr-app.mjs"
 import { defaultInboxRoot } from "./inbox.mjs"
 
 const conversationIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
@@ -52,7 +52,7 @@ function waitForAppLaunch(child) {
     child.once("message", message => {
       clearTimeout(timeout)
       if (message.opened === true) resolve(true)
-      else reject(new Error(message.error))
+      else reject(Object.assign(new Error(message.error), { snapshot: message.snapshot }))
     })
     child.unref()
   })
@@ -76,7 +76,7 @@ async function claimTurn(inboxRoot, conversationId, count) {
 export async function interceptAnnotateSlash(payload, {
   env = process.env, readAgent = readHerdrAgent, command = herdrCommand, launch = start,
   inboxRoot = defaultInboxRoot(), record = recordHerdrOutcome,
-  selectApp = selectHerdrApp, verifyApp = verifyHerdrAppConversation,
+  placeApp = appPlacement, verifyApp = verifyHerdrAppConversation, snapshotApp = herdrAppSnapshot,
 } = {}) {
   const argument = annotateSlash(payload.lastUserInput)
   if (argument === undefined) return false
@@ -100,12 +100,11 @@ export async function interceptAnnotateSlash(payload, {
         return "replayed"
       }
       const [selection, verification, file] = await Promise.allSettled([
-        selectApp(env),
+        placeApp(opener),
         verifyApp(opener, conversationId),
         slashDocument(argument, cwd),
       ])
       if (selection.status === "rejected") throw selection.reason
-      if (!selection.value) throw new Error("Herdr.app unavailable or does not know the calling terminal")
       if (verification.status === "rejected") throw verification.reason
       if (file.status === "rejected") throw file.reason
       if (!await launch({ conversationId, document: file.value, env, pid: verification.value.pid })) {
@@ -115,7 +114,8 @@ export async function interceptAnnotateSlash(payload, {
       return "opened"
     } catch (err) {
       const reason = err?.message || String(err)
-      await record(conversationId, `Herdr.app slash error: ${reason}`)
+      const snapshot = err?.snapshot ?? await snapshotApp(opener, err)
+      await record(conversationId, `Herdr.app slash error: ${reason}; snapshot=${JSON.stringify(snapshot)}`)
       return { reason }
     }
   }

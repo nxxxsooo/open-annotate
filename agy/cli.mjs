@@ -14,7 +14,7 @@ import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
 import { resolveTuiBinary } from "../tui/binary.mjs"
 import { captureHerdrConversation, deliverHerdrReview, focusedPane, herdrCommand, readHerdrAgent, recordHerdrOutcome } from "./herdr.mjs"
-import { deliverHerdrAppReview, herdrAppOpener, herdrAppTerminalGone, openHerdrAppTui, selectHerdrApp } from "./herdr-app.mjs"
+import { deliverHerdrAppReview, herdrAppOpener, herdrAppSnapshot, herdrAppTerminalGone, openHerdrAppTui, selectHerdrApp } from "./herdr-app.mjs"
 
 const execute = promisify(execFile)
 
@@ -151,10 +151,10 @@ async function cmdQueue(options) {
   }
 }
 
-export async function selectTuiOpener({ env, tty, exec = execute }) {
+export async function selectTuiOpener({ env, tty, exec }) {
   if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID) {
     const bin = env.HERDR_BIN_PATH || "herdr"
-    const response = await exec(bin, ["pane", "get", env.HERDR_PANE_ID], { env, timeout: 2000 }).catch(() => null)
+    const response = await (exec ?? execute)(bin, ["pane", "get", env.HERDR_PANE_ID], { env, timeout: 2000 }).catch(() => null)
     if (response) {
       const { result } = JSON.parse(response.stdout)
       if (result?.pane?.pane_id && result.pane.tab_id) return { kind: "herdr", bin, pane: result.pane }
@@ -333,6 +333,7 @@ async function cmdHerdrReview(options, shortcut) {
 }
 
 async function cmdHerdrAppSlash(conversationId, pid, document) {
+  const opener = herdrAppOpener(process.env)
   let opened = false
   const reportLaunch = message => {
     if (!process.connected) return false
@@ -342,7 +343,6 @@ async function cmdHerdrAppSlash(conversationId, pid, document) {
     return true
   }
   try {
-    const opener = herdrAppOpener(process.env)
     if (!opener || !conversationId || !Number.isSafeInteger(pid) || (document && !path.isAbsolute(document))) {
       throw new Error("Invalid AGY Herdr.app slash launch.")
     }
@@ -357,8 +357,9 @@ async function cmdHerdrAppSlash(conversationId, pid, document) {
     })
     await recordHerdrOutcome(conversationId, `Herdr.app slash: ${status}`)
   } catch (err) {
-    if (opened || !reportLaunch({ error: err.message })) {
-      await recordHerdrOutcome(conversationId, `Herdr.app slash error: ${err.message}`)
+    const snapshot = opener && await herdrAppSnapshot(opener, err)
+    if (opened || !reportLaunch({ error: err.message, snapshot })) {
+      await recordHerdrOutcome(conversationId, `Herdr.app slash error: ${err.message}; snapshot=${JSON.stringify(snapshot)}`)
     }
     throw err
   }

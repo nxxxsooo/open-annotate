@@ -1,33 +1,102 @@
 import { execFile } from "node:child_process"
+import { createConnection } from "node:net"
+import os from "node:os"
 import path from "node:path"
 import { setTimeout as wait } from "node:timers/promises"
 import { promisify } from "node:util"
 import { enqueueAnnotations } from "./inbox.mjs"
 import { getActiveAgySessions } from "./session.mjs"
 
-const execute = promisify(execFile)
+const exec = promisify(execFile)
 const localAddress = /^t[0-9a-z]+$/
 const peekAttempts = 30
 const peekPause = 100
+const appTimeout = 1500
+const appResponseLimit = 1024 * 1024
+
+// The CLI is the app executable on macOS, so a headless AGY sandbox can deny
+// launching it. Talk to the already-running app using its CLI socket protocol.
+function execute(bin, args, options) {
+  if (bin !== "herdr-app") return exec(bin, args, options)
+  const { env, timeout } = options
+  const [action, command, flag, terminal] = args
+  const request = action === "do" && command === "terminal.peek" && flag === "--terminal"
+    ? { do: command, args: { terminal } }
+    : action === "ls" || action === "status" ? { [action]: true } : null
+  if (!request) throw new Error(`Unsupported Herdr.app command: ${args.join(" ")}`)
+  const home = env.HERDR_APP_HOME || path.join(env.HOME || os.homedir(), ".config", "herdr-app")
+  return new Promise((resolve, reject) => {
+    const client = createConnection(path.join(home, "herdr-app.sock"))
+    const timer = setTimeout(() => fail(new Error(`timed out after ${timeout} ms`)), timeout)
+    const fail = err => {
+      clearTimeout(timer)
+      client.destroy()
+      reject(err)
+    }
+    const chunks = []
+    let bytes = 0
+    client.once("connect", () => client.end(JSON.stringify(request)))
+    client.once("error", fail)
+    client.on("data", chunk => {
+      bytes += chunk.length
+      if (bytes > appResponseLimit) return fail(new Error("response exceeded 1 MiB"))
+      chunks.push(chunk)
+    })
+    client.once("end", () => {
+      clearTimeout(timer)
+      const stdout = Buffer.concat(chunks).toString("utf8")
+      try {
+        const response = JSON.parse(stdout)
+        if (response.error) throw Object.assign(new Error(errorMessage({ stdout })), { stdout })
+        resolve({ stdout })
+      } catch (err) {
+        reject(err)
+      }
+    })
+  })
+}
 
 export function inHerdrApp(env) {
   // A local app terminal has a core address, not a name or a remote address.
   return localAddress.test(env.HC_TERMINAL_ID ?? "") && Boolean(env.HC_TERMINAL_SOCKET)
 }
 
-async function json(exec, bin, args, env, timeout = 350) {
+async function json(exec, bin, args, env, timeout = appTimeout) {
   const { stdout } = await exec(bin, args, { env, timeout })
   return JSON.parse(stdout)
 }
 
-export async function appPlacement({ parent, env }, exec = execute) {
-  const [{ spaces }, status] = await Promise.all([
-    json(exec, "herdr-app", ["ls"], env),
-    json(exec, "herdr-app", ["status"], env),
-  ])
-  if (!Array.isArray(status.overlays)) throw new Error("Herdr.app did not report its overlays.")
-  const locations = spaces.filter(space => space.machine === null).flatMap(space =>
+function readAppView(env, exec) {
+  return Promise.allSettled(["ls", "status"].map(async action => {
+    try {
+      return await json(exec, "herdr-app", [action], env)
+    } catch (err) {
+      const reason = err.killed ? `timed out after ${appTimeout} ms` : errorMessage(err)
+      throw new Error(`herdr-app ${action}: ${reason}`, { cause: err })
+    }
+  }))
+}
+
+function appLocations(list) {
+  return list.spaces.filter(space => space.machine === null).flatMap(space =>
     space.tabs.flatMap(tab => tab.terminals.map(host => ({ space: space.id, tab: tab.id, host }))))
+}
+
+export async function appPlacement({ parent, env }, exec = execute) {
+  const view = await readAppView(env, exec)
+  try {
+    const [list, status] = view.map(result => {
+      if (result.status === "rejected") throw result.reason
+      return result.value
+    })
+    return await findAppPlacement({ parent, env }, appLocations(list), status, exec)
+  } catch (err) {
+    throw Object.assign(new Error(err.message, { cause: err }), { appView: view })
+  }
+}
+
+async function findAppPlacement({ parent, env }, locations, status, exec) {
+  if (!Array.isArray(status.overlays)) throw new Error("Herdr.app did not report its overlays.")
   const visited = new Set()
   for (let id = parent; localAddress.test(id ?? "") && !visited.has(id);) {
     visited.add(id)
@@ -37,10 +106,15 @@ export async function appPlacement({ parent, env }, exec = execute) {
       const { space, tab, host } = location
       // A pane's own terminal keeps its pane-based focus rule. A child
       // shares that pane and must also be the agent shown in it.
-      const focused = status.space === space && status.tab === tab &&
+      const hostFocused = status.space === space && status.tab === tab &&
         Boolean(host.pane) && status.focused_pane === host.pane &&
-        (host.terminal === parent || status.agent === parent) &&
         status.overlays.every(id => id === "toast")
+      // A layout overlay alone cannot identify which terminal it displays.
+      // Only treat a pane-less caller as peeked when the app names it.
+      const shown = status.agent === parent
+      const peeked = host.terminal !== parent && shown && status.overlays.includes("layout") &&
+        status.overlays.every(id => id === "toast" || id === "layout")
+      const focused = peeked || (hostFocused && (host.terminal === parent || shown))
       return { focused, space, tab, host: host.terminal }
     }
     // Herdr.app lists direct sub-agents only; follow hc ancestry for deeper children.
@@ -49,6 +123,40 @@ export async function appPlacement({ parent, env }, exec = execute) {
     id = terminal.parent
   }
   throw new Error("Herdr.app does not know the calling terminal as a local pane or sub-agent.")
+}
+
+export async function herdrAppSnapshot({ parent, env }, error, exec = execute) {
+  const [view, core] = await Promise.all([
+    error?.appView ?? error?.cause?.appView ?? readAppView(env, exec),
+    json(exec, "hc", ["ls", "--json"], env).catch(() => null),
+  ])
+  const callers = new Set()
+  const parents = new Map(Array.isArray(core?.terminals)
+    ? core.terminals.map(({ address, parent }) => [address, parent]) : [])
+  for (let id = parent; localAddress.test(id ?? "") && !callers.has(id); id = parents.get(id)) {
+    callers.add(id)
+  }
+  const [list, reported] = view
+  const status = reported.value
+  const entries = []
+  try {
+    for (const { space, tab, host } of appLocations(list.value)) {
+      const sub_agents = host.sub_agents?.filter(id => callers.has(id))
+      if (callers.has(host.terminal) || sub_agents?.length) {
+        entries.push({ space, tab, terminal: host.terminal, pane: host.pane, sub_agents })
+      }
+    }
+  } catch {
+    // Keep the original placement error if the list was unavailable or malformed.
+  }
+  return {
+    caller: parent,
+    status: status ? {
+      space: status.space, tab: status.tab, focused_pane: status.focused_pane, agent: status.agent, overlays: status.overlays,
+    } : null,
+    entries,
+    errors: view.filter(result => result.status === "rejected").map(result => result.reason.message),
+  }
 }
 
 export function herdrAppOpener(env) {
@@ -77,6 +185,11 @@ function commandError(err) {
   try { return JSON.parse(err.stderr || err.stdout).error } catch { return undefined }
 }
 
+function errorMessage(err) {
+  const detail = commandError(err)
+  return detail?.message ?? detail ?? err.message
+}
+
 export async function openHerdrAppTui(opener, directory, argv, { exec = execute, pause = wait } = {}) {
   const { parent, env } = opener
   let id
@@ -98,7 +211,7 @@ export async function openHerdrAppTui(opener, directory, argv, { exec = execute,
       const current = await appPlacement(opener, exec)
       if (!current.focused) {
         const labels = await tabLabels(opener, current, exec)
-        await exec("hc", ["label", id, ...labels], { env, timeout: 350 })
+        await exec("hc", ["label", id, ...labels], { env, timeout: appTimeout })
         return { ...opener, id, peek: false }
       }
       try {
@@ -113,11 +226,10 @@ export async function openHerdrAppTui(opener, directory, argv, { exec = execute,
       }
     }
   } catch (err) {
-    const detail = commandError(err)
-    const message = detail?.message ?? detail ?? err.message
+    const message = errorMessage(err)
     if (id) {
       try {
-        await exec("hc", ["kill", id], { env, timeout: 350 })
+        await exec("hc", ["kill", id], { env, timeout: appTimeout })
       } catch (cleanup) {
         if (commandError(cleanup)?.kind !== "not_found" && commandError(cleanup)?.kind !== "finished") {
           throw new Error(`Failed to open the Herdr.app review: ${message}. Could not stop reviewer terminal ${id}: ${cleanup.message}`)

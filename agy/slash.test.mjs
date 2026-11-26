@@ -103,8 +103,10 @@ test("Herdr.app slash verifies the AGY conversation behind a PTY proxy and claim
   t.after(() => rm(inboxRoot, { force: true, recursive: true }))
   const launches = []
   const records = []
+  const snapshot = { caller: appOpener.parent, status: { overlays: ["layout"] }, entries: [] }
   const options = {
-    env: appEnv, inboxRoot, selectApp: async () => appOpener, verifyApp: verify,
+    env: appEnv, inboxRoot, placeApp: async () => {}, verifyApp: verify,
+    snapshotApp: async () => snapshot,
     launch: async request => { launches.push(request); return true },
     record: async (_, reason) => { records.push(reason) },
   }
@@ -112,7 +114,8 @@ test("Herdr.app slash verifies the AGY conversation behind a PTY proxy and claim
     interceptAnnotateSlash(payload, options), interceptAnnotateSlash(payload, options),
   ]).then(outcomes => outcomes.sort()), ["opened", "replayed"])
   assert.deepEqual(launches, [{ conversationId, document: undefined, env: appEnv, pid: 123 }])
-  assert.equal(await interceptAnnotateSlash(payload, { ...options, selectApp: async () => null }), "replayed",
+  const appUnavailable = async () => { throw new Error("herdr-app status: timed out after 1500 ms") }
+  assert.equal(await interceptAnnotateSlash(payload, { ...options, placeApp: appUnavailable }), "replayed",
     "a claimed turn does not fall back to the skill when the app has disappeared")
   assert.ok(records.includes("Herdr.app slash reviewer launch claimed"))
   assert.ok(records.includes("Herdr.app slash replay ignored"))
@@ -122,7 +125,7 @@ test("Herdr.app slash verifies the AGY conversation behind a PTY proxy and claim
   assert.equal(launches.at(-1).document, document)
 
   const failures = [
-    [{ selectApp: async () => null }, /does not know the calling terminal/],
+    [{ placeApp: appUnavailable }, /herdr-app status: timed out after 1500 ms/],
     [{ verifyApp: (opener, id) => verify(opener, id, { processes: wrappers }) }, /no AGY process under hc terminal t14w/],
     [{ verifyApp: (opener, id) => verify(opener, id, {
       processes: `${processList}\n124 102 agy`,
@@ -152,6 +155,7 @@ test("Herdr.app slash verifies the AGY conversation behind a PTY proxy and claim
     assert.ok(message.endsWith(". Run `agy-annotate tui` in a shell to review manually."))
     assert.match(records.at(-1), /^Herdr.app slash error:/)
     assert.match(records.at(-1), reason)
+    assert.deepEqual(JSON.parse(records.at(-1).split("; snapshot=")[1]), snapshot)
     assert.deepEqual(await handlePreInvocation(next, { intercept, inboxRoot }), { terminationBehavior: "terminate" })
   }
   assert.equal(await interceptAnnotateSlash({ ...payload, invocationNum: 1 }, options), false)

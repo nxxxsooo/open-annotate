@@ -1,10 +1,11 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { createServer } from "node:net"
 import path from "node:path"
 import os from "node:os"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { finishTuiReview, getAdaptedThemeTokens, herdrTuiPlacement, selectTuiOpener, waitForTuiPane } from "./cli.mjs"
-import { appPlacement, openHerdrAppTui } from "./herdr-app.mjs"
+import { appPlacement, herdrAppSnapshot, openHerdrAppTui } from "./herdr-app.mjs"
 import { handlePreInvocation, handleStop } from "./hooks.mjs"
 import { enqueueAnnotations } from "./inbox.mjs"
 import { bundledBinary, resolveTuiBinary } from "../tui/binary.mjs"
@@ -45,7 +46,7 @@ test("reachable Herdr TUI takes precedence over Herdr.app, which takes precedenc
   const exec = async (bin, args, { timeout }) => {
     if (bin === "herdr") return json({ result: { pane } })
     assert.equal(bin, "herdr-app")
-    assert.ok(timeout < 1000)
+    assert.equal(timeout, 1500)
     return json(args[0] === "ls" ? appLayout : appStatus)
   }
   assert.deepEqual(await selectTuiOpener({ env: both, tty: true, exec }), { kind: "herdr", bin: "herdr", pane })
@@ -58,9 +59,55 @@ test("reachable Herdr TUI takes precedence over Herdr.app, which takes precedenc
   assert.deepEqual(await selectTuiOpener({ env: { ...appEnv, HC_TERMINAL_ID: "t15" }, tty: true, exec }), { kind: "tty" })
   const offline = async (bin, args) => {
     if (args[0] === "status") throw new Error("app not running")
-    return exec(bin, args, { timeout: 350 })
+    return exec(bin, args, { timeout: 1500 })
   }
   assert.deepEqual(await selectTuiOpener({ env: appEnv, tty: false, exec: offline }), { kind: "window" })
+})
+
+test("Herdr.app placement uses the existing app socket without launching the app binary", async t => {
+  const appHome = await mkdtemp(path.join(os.tmpdir(), "annotate-app-"))
+  const requests = []
+  const server = createServer({ allowHalfOpen: true }, socket => {
+    const chunks = []
+    socket.on("data", chunk => chunks.push(chunk))
+    socket.on("end", () => {
+      const request = JSON.parse(Buffer.concat(chunks))
+      requests.push(request)
+      socket.end(JSON.stringify(request.ls ? appLayout : appStatus))
+    })
+  })
+  await new Promise((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(path.join(appHome, "herdr-app.sock"), resolve)
+  })
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve))
+    await rm(appHome, { recursive: true, force: true })
+  })
+  const opener = { ...appOpener, env: { ...appEnv, HERDR_APP_HOME: appHome } }
+  assert.equal((await appPlacement(opener)).host, appOpener.parent)
+  assert.deepEqual(requests.sort((a, b) => Number(!a.ls) - Number(!b.ls)), [{ ls: true }, { status: true }])
+})
+
+test("Herdr.app placement failures retain the original partial view and list only relevant ancestors", async () => {
+  const child = "t145"
+  const opener = { ...appOpener, parent: child }
+  const layout = structuredClone(appLayout)
+  layout.spaces[0].tabs[0].terminals.push({ terminal: "t999", pane: "p9" })
+  const exec = async (bin, args, { timeout }) => {
+    assert.equal(timeout, 1500)
+    if (bin === "hc") return json({ terminals: [{ address: child, parent: appOpener.parent }] })
+    if (args[0] === "ls") return json(layout)
+    throw Object.assign(new Error("execution exceeded limit"), { killed: true })
+  }
+  const error = await appPlacement(opener, exec).catch(err => err)
+  assert.equal(error.message, "herdr-app status: timed out after 1500 ms")
+  assert.deepEqual(await herdrAppSnapshot(opener, error, exec), {
+    caller: child,
+    status: null,
+    entries: [{ space: "sp1", tab: "tb1", terminal: appOpener.parent, pane: "p1", sub_agents: undefined }],
+    errors: [error.message],
+  })
 })
 
 test("Herdr.app matches the focused pane, starts a silent child, and retries only app discovery", async () => {
@@ -133,8 +180,10 @@ test("Herdr.app uses the shown sub-agent and its host pane to determine focus", 
   const locate = (parent, status) => appPlacement({ ...appOpener, parent }, exec(status))
   assert.deepEqual(await locate(child, appStatus), { ...placement, focused: true })
   assert.deepEqual(await locate(grandchild, { ...appStatus, agent: grandchild }), { ...placement, focused: true })
+  assert.deepEqual(await locate(child, { ...appStatus, overlays: ["layout"] }), { ...placement, focused: true })
   for (const diff of [
     { agent: appOpener.parent }, { focused_pane: "p2" }, { space: "sp2" }, { tab: "tb2" }, { overlays: ["peek"] },
+    { agent: appOpener.parent, overlays: ["layout"] },
   ]) {
     assert.deepEqual(await locate(child, { ...appStatus, ...diff }), { ...placement, focused: false })
   }
