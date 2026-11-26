@@ -17,10 +17,21 @@ const agent = { agent: "agy", focused: true, agent_session: { kind: "id", value:
 const payload = { conversationId, invocationNum: 0, initialNumSteps: 1, lastUserInput: "/annotate" }
 const appEnv = { HC_TERMINAL_ID: "t14w", HC_TERMINAL_SOCKET: "/fixture/hc.sock" }
 const appOpener = { kind: "herdr-app", parent: "t14w", env: appEnv }
-const terminal = { address: "t14w", state: "live", foreground: { name: "agy", pid: 123 }, status: { app: "antigravity", state: "working" } }
+const terminal = {
+  address: "t14w", state: "live", pid: 100, foreground: { name: "ghost-complete", pid: 100 },
+  status: { app: "antigravity", state: "working" },
+}
+const wrappers = "100 1 ghost-complete\n101 100 /bin/zsh\n102 101 /bin/zsh"
+const processList = `${wrappers}\n123 102 /Applications/Antigravity CLI/bin/agy`
 const presence = [{ conversationId, pid: 123 }]
-const verify = (opener, id, { snapshot = terminal, sessions = () => presence, pid } = {}) => verifyHerdrAppConversation(opener, id, {
+const verify = (opener, id, {
+  snapshot = terminal, processes = processList, sessions = () => presence, pid,
+} = {}) => verifyHerdrAppConversation(opener, id, {
   exec: async (bin, args) => {
+    if (bin === "ps") {
+      assert.deepEqual(args, ["-A", "-o", "pid=,ppid=,comm="])
+      return { stdout: processes }
+    }
     assert.equal(bin, "hc")
     assert.deepEqual(args, ["get", "t14w", "--json"])
     return { stdout: JSON.stringify(snapshot) }
@@ -86,7 +97,7 @@ test("a terminated local slash turn does not restart the model or consume queued
   assert.deepEqual(await handleStop({ conversationId }, { env, inboxRoot }), {})
 })
 
-test("Herdr.app slash verifies a foreground AGY conversation and claims the review once", async t => {
+test("Herdr.app slash verifies the AGY conversation behind a PTY proxy and claims the review once", async t => {
   const inboxRoot = await mkdtemp(path.join(os.tmpdir(), "annotate-hc-slash-test-"))
   t.after(() => rm(inboxRoot, { force: true, recursive: true }))
   const launches = []
@@ -112,8 +123,15 @@ test("Herdr.app slash verifies a foreground AGY conversation and claims the revi
   const next = { ...payload, initialNumSteps: 3 }
   const declines = [
     [{ selectApp: async () => null }, /does not know the calling terminal/],
-    [{ verifyApp: (opener, id) => verify(opener, id, { snapshot: { ...terminal, foreground: { name: "node", pid: 123 } } }) }, /no.*live foreground AGY/],
-    [{ verifyApp: (opener, id) => verify(opener, id, { sessions: () => [] }) }, /no unique conversation presence lock/],
+    [{ verifyApp: (opener, id) => verify(opener, id, { processes: wrappers }) }, /no AGY process under hc terminal t14w/],
+    [{ verifyApp: (opener, id) => verify(opener, id, {
+      processes: `${processList}\n124 102 agy`,
+      sessions: () => [...presence, { pid: 124, conversationId: "other" }],
+    }) }, /2 AGY sessions under hc terminal t14w/],
+    [{ verifyApp: (opener, id) => verify(opener, id, {
+      processes: `${processList}\n999 1 agy`,
+      sessions: () => [{ pid: 999, conversationId }],
+    }) }, /no AGY session presence lock under hc terminal t14w/],
     [{ verifyApp: (opener, id) => verify(opener, id, { sessions: () => [{ pid: 123, conversationId: "different" }] }) }, /no longer matches/],
     [{ verifyApp: (opener, id) => verify(opener, id, { snapshot: { ...terminal, status: null } }) }, /could not determine its state/],
   ]
@@ -144,7 +162,7 @@ test("Herdr.app slash sends to idle or done AGY, queues while working, and refus
   }
   await assert.rejects(deliver({ sessions: () => [{ pid: 123, conversationId: "different" }] }), /no longer matches/)
   await assert.rejects(deliver({
-    snapshot: { ...terminal, foreground: { name: "agy", pid: 999 } },
+    processes: `${wrappers}\n999 102 agy`,
     sessions: () => [{ conversationId, pid: 999 }],
   }), /no longer matches/)
   assert.deepEqual(queued, [])

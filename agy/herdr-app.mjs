@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import path from "node:path"
 import { setTimeout as wait } from "node:timers/promises"
 import { promisify } from "node:util"
 import { enqueueAnnotations } from "./inbox.mjs"
@@ -126,17 +127,22 @@ export async function herdrAppTerminalGone(opener, exec = execute) {
 export async function verifyHerdrAppConversation(opener, conversationId, {
   exec = execute, sessions = getActiveAgySessions, pid,
 } = {}) {
-  const terminal = await readTerminal(opener, opener.parent, exec)
-  const foreground = terminal.foreground
-  if (terminal.address !== opener.parent || terminal.state !== "live" ||
-      foreground?.name !== "agy" || !Number.isSafeInteger(foreground.pid)) {
-    throw new Error("hc does not report a live foreground AGY process")
+  const { parent, env } = opener
+  const terminal = await readTerminal(opener, parent, exec)
+  const root = terminal.pid
+  if (terminal.address !== parent || terminal.state !== "live" || !Number.isSafeInteger(root) || root <= 0) {
+    throw new Error(`hc does not report a live process for terminal ${parent}`)
   }
-  // Core status can be absent and its records can include more than one
-  // session. Match the foreground process to AGY's live presence lock.
-  const matches = sessions().filter(session => session.pid === foreground.pid)
-  if (matches.length !== 1) throw new Error("AGY foreground PID has no unique conversation presence lock")
-  if (matches[0].conversationId !== conversationId || (pid !== undefined && foreground.pid !== pid)) {
+  // The foreground can be a shell or PTY proxy. Use the terminal's own
+  // process as the root and require an AGY presence lock within its tree.
+  const { stdout } = await exec("ps", ["-A", "-o", "pid=,ppid=,comm="], { env, timeout: 350 })
+  const agyPids = agyProcessesUnder(root, stdout)
+  if (!agyPids.size) throw new Error(`no AGY process under hc terminal ${parent}`)
+  const matches = sessions().filter(session => agyPids.has(session.pid))
+  if (!matches.length) throw new Error(`no AGY session presence lock under hc terminal ${parent}`)
+  if (matches.length > 1) throw new Error(`${matches.length} AGY sessions under hc terminal ${parent}`)
+  const [match] = matches
+  if (match.conversationId !== conversationId || (pid !== undefined && match.pid !== pid)) {
     throw new Error("AGY terminal no longer matches the captured conversation")
   }
   const status = terminal.status
@@ -145,7 +151,27 @@ export async function verifyHerdrAppConversation(opener, conversationId, {
   if (!["idle", "done", "working"].includes(state)) {
     throw new Error("AGY is not ready to receive feedback: hc could not determine its state. Nothing was sent.")
   }
-  return { pid: foreground.pid, state }
+  return { pid: match.pid, state }
+}
+
+function agyProcessesUnder(root, snapshot) {
+  const children = new Map()
+  const agyPids = new Set()
+  for (const line of snapshot.trimEnd().split("\n")) {
+    const row = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line)
+    if (!row) continue
+    const processId = Number(row[1])
+    const parentId = Number(row[2])
+    if (!children.has(parentId)) children.set(parentId, [])
+    children.get(parentId).push(processId)
+    if (path.basename(row[3]) === "agy") agyPids.add(processId)
+  }
+  // Set iteration visits newly added children and also covers direct launches.
+  const tree = new Set([root])
+  for (const processId of tree) {
+    for (const child of children.get(processId) ?? []) tree.add(child)
+  }
+  return new Set([...agyPids].filter(processId => tree.has(processId)))
 }
 
 export async function deliverHerdrAppReview(opener, conversationId, pid, batch, {
