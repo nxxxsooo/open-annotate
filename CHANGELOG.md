@@ -1,14 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.21.0 — Chrome companion setup and updates
 
-- Web reviews from OpenCode and AGY now show Chrome setup steps when Annotate is
-  missing or disabled, with the unpacked folder copied and revealed in Finder.
-- Automatically reload an idle unpacked Chrome companion when its on-disk
-  manifest version increases. Pending feedback keeps the **Reload Annotate**
-  option available so you can finish the review first.
-- Browser protocol 11 requires matching companion files. Reload once to enable
-  automatic updates.
+- When the Chrome companion is missing or disabled, web reviews from OpenCode
+  and AGY show setup steps, copy the unpacked folder path, and reveal it in Finder.
+- An idle unpacked companion reloads automatically when its manifest version
+  increases. If a review is in progress, finish it and use **Reload Annotate**.
+- When upgrading from a version without automatic reload, use **Reload Annotate**
+  once to load browser protocol 11 and enable automatic updates.
 
 ## 0.20.1 — Send AGY notes on quit
 

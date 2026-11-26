@@ -248,8 +248,7 @@ Plain `/annotate`, `/annotate-file`, `/annotate-pick` and `/annotate-selection` 
 Picking and text selection work inside same-origin iframes, legacy framesets and
 nested frames. Reveal and page markers can find those notes after reload; delivered
 Markdown includes a `Frame:` line for frame context. Cross-origin frames cannot be
-picked and show a clear message. After updating to 0.17.0 (browser protocol 8), reload
-the Chrome extension and restart OpenCode.
+picked and show a clear message.
 
 Written drafts autosave locally and restore after panel reload or a return to the same URL, including SPA routes. Selecting another target with unfinished feedback offers **Add/Save & switch**, **Keep editing**, or **Discard & switch**. Storage failures keep the input and offer a retry; competing panels require an explicit choice of draft. Saved-note revision checks likewise prevent stale tabs overwriting newer feedback. Full JSON/Markdown exports include redacted URLs, exact selected text/context, verified selector hints, styles and accessibility. Missing/changed/ambiguous targets are labeled in the sidebar instead of silently rebound. Comments and drafts live in extension-owned UI/storage; the page receives only selection metadata and numbered markers, not your written feedback.
 
