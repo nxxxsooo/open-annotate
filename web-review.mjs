@@ -94,11 +94,8 @@ export function createWebReview(context, options = {}) {
       const receiver = session ? await ensure(sessionID, session) : await create(initial, route, signal)
       if (!receiver) throw new Error("This annotation session is no longer available")
       if (disposed) return true
-      if (target.url) {
-        if (options.open) await options.open(target.url)
-        else await openInBrowser(target.url, options)
-      }
-      context.ui.toast.show({ title: "Annotate", message: `Page opened. Choose ${receiver.target.title} in the Annotate extension.`, duration: 10000 })
+      const guide = await openInBrowser(target.url, options, { open: options.open, setup: options.setup })
+      context.ui.toast.show({ title: "Annotate", message: guide || `Page opened. Choose ${receiver.target.title} in the Annotate extension.`, duration: guide ? 25000 : 10000 })
       return true
     },
     async dispose() {

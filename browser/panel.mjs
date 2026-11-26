@@ -14,6 +14,7 @@ let deliverySupported = true
 let refreshID = 0, connectionRevision = 0, connectionRefresh, connectionRefreshRevision, connectionTimer, scheduledRefresh
 let pendingAction, pendingFocus, undoRecord, clearBatchID, selectedNoteID, noteRenderKey, notice, outdated = false
 let areaViewKey
+let updateVersion, autoUpdating = false
 let sessionSort = localStorage.getItem("sessionSort") || "updated", showAllSessions = false
 
 function icon(name) {
@@ -29,8 +30,26 @@ async function call(data) {
   return result
 }
 function markOutdated() {
-  outdated = true; $("update-notice").hidden = false; controls()
+  outdated = true
+  $("update-notice").hidden = false
+  $("update-message").textContent = "Reload once to finish. Saved notes and drafts are kept; reopen the panel with the icon or Alt+Shift+A afterwards."
+  controls()
   return Object.assign(new Error("Annotate was updated"), { code: "outdated" })
+}
+async function offerUpdate(version) {
+  if (!version || version === updateVersion || outdated) return
+  updateVersion = version
+  if (!(busy.size || pendingAction || undoRecord || state?.mode || state?.notes.length ||
+    document.activeElement === $("comment") || [...models.values()].some(m => m.value || m.pending.size || m.error))) {
+    autoUpdating = true; controls()
+    try { await call({ action: "auto-reload", version }) }
+    catch { /* Leave the manual option available if the worker can't reload. */ }
+    finally { autoUpdating = false; controls() }
+  }
+  if (!outdated) {
+    $("update-notice").hidden = false
+    $("update-message").textContent = "Finish any feedback before reloading. Saved notes and drafts are kept; reopen the panel with the icon or Alt+Shift+A afterwards."
+  }
 }
 const plural = count => `${count} note${count === 1 ? "" : "s"}`
 function status(text, tone = "", page = state?.page.url) { notice = text ? { text, tone, page } : null; renderDelivery() }
@@ -50,7 +69,7 @@ function flushFocus() {
   return true
 }
 async function run(id, fn) {
-  if (busy.has(id)) return
+  if (autoUpdating || busy.has(id)) return
   const previousFocus = document.activeElement, page = state?.page.url
   busy.add(id); controls()
   try { await fn() }
@@ -120,7 +139,7 @@ function pendingCount() {
   const pending = state?.notes.filter(note => note.sentRevision !== note.revision) || []
   return pending.length + (validDraft() && !pending.some(note => note.id === model.value.editing?.id) ? 1 : 0)
 }
-function locked() { return ["clear", "save", "send", "copy-round", "restore-round", "cancel", "save-switch", "discard-switch", "delete", "undo", "reload-draft", "keep-draft", "targets", "new-session", "disconnect", "change-target"].some(id => busy.has(id)) }
+function locked() { return autoUpdating || ["clear", "save", "send", "copy-round", "restore-round", "cancel", "save-switch", "discard-switch", "delete", "undo", "reload-draft", "keep-draft", "targets", "new-session", "disconnect", "change-target", "reload-extension"].some(id => busy.has(id)) }
 function controls() {
   const lock = locked() || outdated
   $("comment").disabled = lock
@@ -543,6 +562,7 @@ async function readConnection() {
     if (available?.id !== result.target?.id || destination?.id !== result.destination?.id) notice = null
     targets = result.targets; workspaces = result.workspaces; disconnected = result.disconnected
     available = result.target; destination = result.destination; connectionError = result.error || ""
+    await offerUpdate(result.updateVersion)
     renderSessions()
     $("connection-hint").textContent = connectionError ? `Connection unavailable: ${connectionError}` : disconnected ? "Select a session to reconnect. Your notes and drafts are kept." : !available && destination ? "Reopen the original session in OpenCode or AGY. This list refreshes automatically." : workspaces.length && !targets.length ? "Create an empty session in an open workspace. Nothing is sent until you click Send." : targets.length > 1 && !destination ? "Choose the session that should receive this review." : !available ? "Open a session in OpenCode or AGY; this panel connects automatically." : ""
     if (!destination && (targets.length > 1 || workspaces.length)) showSessionOptions(true, false)
@@ -721,7 +741,11 @@ task("send", async () => {
   status(`Sent ${plural(result.count)} to ${target.title}. Ready for the next round.`, "success", null)
   focusWhenReady(model.value ? "#comment" : "#pick")
 })
-$("reload-extension").addEventListener("click", () => chrome.runtime.reload())
+task("reload-extension", async () => {
+  if ([...busy].some(id => id !== "reload-extension")) throw new Error("Wait for the current action before reloading.")
+  await Promise.all([...models.values()].map(flushDraft))
+  chrome.runtime.reload()
+})
 task("copy", async () => {
   const text = markdown(review())
   try { await copyText(text); status("Context copied. Notes stay in this round.") }

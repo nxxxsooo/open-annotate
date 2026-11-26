@@ -53,6 +53,7 @@
     "scripts/build-safari.mjs",
     "scripts/install-safari.mjs",
     "scripts/browser-target.mjs",
+    "scripts/chrome-companion.mjs",
     "scripts/install-plugin.mjs",
     "scripts/verify-tui.mjs",
     "scripts/migrate-page-context.mjs",

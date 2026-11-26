@@ -118,19 +118,19 @@ async function cmdWeb(targetArg, options) {
   }
 
   console.log(`✓ Session paired for browser review: "${session.title}" (${session.conversationId.slice(0, 8)})`)
-  console.log(`  Open the "Annotate" extension and choose this session (Safari copies notes locally).`)
-
+  let url
   if (targetArg && targetArg.trim()) {
     const { browserTarget } = await import("../targets.mjs")
     const target = await browserTarget(targetArg, session.directory)
-    if (target?.url) {
-      console.log(`  Opening target: ${target.url}`)
-      if (process.platform === "darwin") {
-        const { openInBrowser } = await import("../scripts/browser-target.mjs")
-        await openInBrowser(target.url, options)
-      }
-    }
+    url = target?.url
+    if (url) console.log(`  Opening target: ${url}`)
   }
+  let guide
+  if (process.platform === "darwin") {
+    const { openInBrowser } = await import("../scripts/browser-target.mjs")
+    guide = await openInBrowser(url, options)
+  }
+  console.log(guide || `  Open the "Annotate" extension and choose this session (Safari copies notes locally).`)
 }
 
 async function cmdQueue(options) {

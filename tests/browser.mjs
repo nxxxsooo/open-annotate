@@ -1,5 +1,5 @@
 import { createServer } from "node:http"
-import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises"
+import { cp, mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import os from "node:os"
 import path from "node:path"
@@ -7,7 +7,7 @@ import assert from "node:assert/strict"
 import { installBridge } from "../scripts/install-bridge.mjs"
 import { createReceiver } from "../bridge/receiver.mjs"
 import { createWebReview } from "../web-review.mjs"
-import { PROTOCOL, validateReview } from "../browser/protocol.mjs"
+import { validateReview } from "../browser/protocol.mjs"
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || pathToFileURL(path.join(os.homedir(), ".agents/node_modules/playwright-core/index.mjs")).href)
 
@@ -31,6 +31,8 @@ await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
 const url = `http://127.0.0.1:${server.address().port}/fixture`
 const targetsDirectory = path.join(temp, "targets")
 const installation = await installBridge({ profileDirectory: path.join(temp, "chrome"), installRoot: path.join(temp, "host"), targetsDirectory })
+const unpacked = path.join(temp, "extension")
+await cp(installation.extensionDirectory, unpacked, { recursive: true })
 const sent = []
 let failNextDelivery = false
 let context, panel, receiver
@@ -40,8 +42,14 @@ try {
   context = await chromium.launchPersistentContext(path.join(temp, "chrome"), {
     executablePath: process.env.CHROMIUM_PATH || chromium.executablePath(),
     headless: true, viewport: { width: 1440, height: 1000 },
-    args: [`--disable-extensions-except=${installation.extensionDirectory}`, `--load-extension=${installation.extensionDirectory}`, "--enable-unsafe-extension-debugging"],
+    args: [`--disable-extensions-except=${unpacked}`, `--load-extension=${unpacked}`, "--enable-unsafe-extension-debugging"],
   })
+  // Chrome for Testing can load from a flag with Developer mode off, but disables
+  // the extension on reload in that case. Match a normal unpacked installation.
+  const extensionsPage = await context.newPage()
+  await extensionsPage.goto("chrome://extensions")
+  await extensionsPage.evaluate(() => new Promise(resolve => chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }, resolve)))
+  await extensionsPage.close()
   // Synthetic modal only: never import private source-page content into fixtures.
   const modalPage = await context.newPage()
   await modalPage.setContent(`<!doctype html><style>
@@ -1075,20 +1083,22 @@ try {
     await page.goto(fixtureURL); await page.bringToFront(); await activate()
     await instrumentFrames()
     if (fixture === "iframe") {
-      await worker.evaluate(async () => {
+      const installedCapture = await worker.evaluate(async () => {
         const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-        await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => {
+        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => {
           const previous = globalThis.__opencodeAnnotate, dispose = previous.dispose
+          const version = previous.version
           delete previous.version
           previous.dispose = () => { globalThis.__testReplaced = true; dispose() }
+          return version
         } })
       })
       await rpc({ action: "current" })
-      const upgraded = await worker.evaluate(async version => {
+      const upgraded = await worker.evaluate(async () => {
         const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: version => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version === version, args: [version] })
-      }, PROTOCOL)
-      assert.ok(upgraded.every(item => item.result))
+        return chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => globalThis.__testReplaced && globalThis.__opencodeAnnotate.version })
+      })
+      assert.ok(installedCapture.every(({ frameId, result }) => result >= 1 && upgraded.find(frame => frame.frameId === frameId)?.result === result))
       passed.push("Pre-frame page tools are replaced once; subsequent injections preserve the current inspector")
     }
     let inner = await page.locator(selector).contentFrame()
@@ -1339,6 +1349,52 @@ try {
   if (!process.env.SKIP_SCREENSHOTS) await panel.screenshot({ path: path.join(artifacts, "panel-outdated.png") })
   passed.push("An outdated background worker shows a one-click reload instead of raw action errors")
   assert.deepEqual(errors, [])
+  await panel.close()
+  panel = null
+
+  // Chrome for Testing loaded a temporary unpacked copy, separate from both the
+  // native host's checkout and the maintainer's Chrome. Only that copy changes.
+  const fixtureProfile = path.join(temp, "chrome", "Profile 999")
+  await mkdir(fixtureProfile)
+  await writeFile(path.join(fixtureProfile, "Secure Preferences"), JSON.stringify({
+    extensions: { settings: { [installation.extensionID]: { location: 4, path: unpacked } } },
+  }))
+  const manifestPath = path.join(unpacked, "manifest.json")
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"))
+  const updated = `${manifest.version}.1`, nextVersion = `${manifest.version}.2`
+  const draftKey = "draft:other-page"
+  const updateDraft = { revision: 1, value: { comment: "Keep this written draft through extension reload" } }
+  await worker.evaluate(({ draftKey, draft }) => chrome.storage.local.set({ [draftKey]: draft }), { draftKey, draft: updateDraft })
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, version: updated }))
+  const openUpdatePanel = async extensionWorker => {
+    const opened = context.waitForEvent("page", { predicate: p => p.url().includes("panel.html") })
+    await extensionWorker.evaluate(() => chrome.tabs.create({ url: chrome.runtime.getURL("panel.html"), active: false }))
+    return opened
+  }
+  const updatePanel = await openUpdatePanel(worker)
+  await updatePanel.locator("#update-notice").waitFor()
+  assert.equal(await worker.evaluate(() => chrome.runtime.getManifest().version), manifest.version)
+  assert.equal(await worker.evaluate(async () => (await chrome.storage.local.get("autoReloadVersion")).autoReloadVersion), undefined)
+  const [manualWorker] = await Promise.all([
+    context.waitForEvent("serviceworker", { timeout: 10000 }),
+    updatePanel.getByRole("button", { name: "Reload Annotate" }).click().catch(error => {
+      if (!updatePanel.isClosed()) throw error
+    }),
+  ])
+  assert.equal(await manualWorker.evaluate(() => chrome.runtime.getManifest().version), updated)
+  assert.deepEqual(await manualWorker.evaluate(async key => (await chrome.storage.local.get(key))[key], draftKey), updateDraft)
+  if (!updatePanel.isClosed()) await updatePanel.close()
+  passed.push("Unpacked update defers with an off-page draft; manual extension reload preserves the draft")
+
+  await manualWorker.evaluate(key => chrome.storage.local.remove(key), draftKey)
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, version: nextVersion }))
+  const [autoWorker] = await Promise.all([
+    context.waitForEvent("serviceworker", { timeout: 10000 }),
+    openUpdatePanel(manualWorker),
+  ])
+  assert.equal(await autoWorker.evaluate(() => chrome.runtime.getManifest().version), nextVersion)
+  assert.equal(await autoWorker.evaluate(async () => (await chrome.storage.local.get("autoReloadVersion")).autoReloadVersion), nextVersion)
+  passed.push("An idle unpacked update reloads itself once and retains its attempted version across reload")
   await writeFile(path.join(artifacts, "results.json"), JSON.stringify({ passed, errors }, null, 2))
   console.log(JSON.stringify({ passed }, null, 2))
 } catch (error) {

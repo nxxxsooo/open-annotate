@@ -469,7 +469,7 @@ async function browserHarness(t, options = {}) {
   t.after(() => rm(root, { recursive: true, force: true }))
   const opened = []
   const h = await harness(t, {
-    sessionDir: root, ...options, web: { autoRegister: true, receiver: { root }, open: async url => {
+    sessionDir: root, ...options, web: { autoRegister: true, receiver: { root }, setup: async () => "", open: async url => {
       const target = (await listTargets(root)).find(target => target.sessionID)
       assert.ok(target, "register the receiver before opening Chrome")
       assert.equal((await request(target.socket, { action: "info", targetID: target.id })).ok, true)

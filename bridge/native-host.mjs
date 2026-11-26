@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { decodeStream, encode, request } from "./wire.mjs"
 import { listTargets } from "./receiver.mjs"
+import { installedManifestVersions } from "../scripts/chrome-companion.mjs"
 
 const configPath = process.argv[2]
 const origin = process.argv[3]
@@ -15,13 +16,17 @@ decodeStream(process.stdin, async message => {
   try {
     const targets = await listTargets(config.targetsDirectory)
     if (message.action === "targets") {
-      const live = await Promise.all(targets.map(async target => {
+      const probes = targets.map(async target => {
         try {
           const result = await request(target.socket, { action: "info", targetID: target.id })
           return result.ok && result.target ? result.target : null
         } catch { return null }
-      }))
-      response = { ok: true, targets: live.filter(Boolean) }
+      })
+      const [live, diskVersions] = await Promise.all([
+        Promise.all(probes),
+        message.checkForUpdate === true ? installedManifestVersions(config.profileDirectory, config.extensionID) : [],
+      ])
+      response = { ok: true, targets: live.filter(Boolean), ...(diskVersions.length ? { diskVersions } : {}) }
     } else {
       const target = targets.find(target => target.id === message.targetID)
       if (!target) throw new Error("Paired session is offline; reopen it in OpenCode or AGY to reconnect")

@@ -1,7 +1,7 @@
 export const MAX_BYTES = 512 * 1024
 export const HOST = "fun.mjshao.annotate"
 // Bump when panel ↔ worker actions change. Chrome can keep an older worker running beside a newer panel.
-export const PROTOCOL = 10
+export const PROTOCOL = 11
 const finiteFields = (value, keys) => value && keys.every(key => Number.isFinite(value[key]))
 export function validateAnchor(anchor) {
   if (typeof anchor?.quote !== "string" || anchor.quote.length > 4000 ||

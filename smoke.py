@@ -243,6 +243,9 @@ try:
                       f'with Path({str(root / "opened.jsonl")!r}).open("a") as output:\n'
                       '    output.write(json.dumps(sys.argv[1:]) + "\\n")\n')
     opener.chmod(0o700)
+    clipboard = bin_dir / "pbcopy"
+    clipboard.write_text(f"#!/bin/sh\ncat > {shlex.quote(str(root / 'clipboard.txt'))}\n")
+    clipboard.chmod(0o700)
     (fixture / "package.json").write_text(json.dumps({
         "name": "annotate-smoke", "type": "module", "exports": {".": "./server.ts", "./tui": "./tui.ts"},
     }))
@@ -540,17 +543,25 @@ export default {{
 
     # /annotate routes explicit browser targets; opening neither sends nor runs a model.
     submit("/annotate https://example.test/review", "web-url")
-    wait("Page opened", "web-url-opened")
+    wait("Load the Annotate extension", "web-url-opened")
+    unpacked = Path(unquote(urlparse(ENTRYPOINT).path)).parent / "browser"
+    assert (root / "clipboard.txt").read_text() == str(unpacked)
+    chrome_profile = fixture_home / "Library/Application Support/Google/Chrome/Default"
+    chrome_profile.mkdir(parents=True)
+    (chrome_profile / "Secure Preferences").write_text(json.dumps({
+        "extensions": {"settings": {"camdllkfdgkbgjpmlkoogfmjjemccpkb": {"location": 4, "path": str(unpacked)}}},
+    }))
     html_file = root / "中文 page.html"
     html_file.write_text("<h1>Browser fixture</h1>")
     submit('/annotate "中文 page.html"', "web-html")
     deadline = time.monotonic() + 30
-    while len((root / "opened.jsonl").read_text().splitlines()) < 2:
+    while len((root / "opened.jsonl").read_text().splitlines()) < 3:
         if time.monotonic() > deadline:
             raise AssertionError("The HTML target did not reach the browser opener")
         time.sleep(0.05)
     opened = [json.loads(line) for line in (root / "opened.jsonl").read_text().splitlines()]
-    assert opened == [["-a", "Google Chrome", "https://example.test/review"], ["-a", "Google Chrome", html_file.as_uri()]], opened
+    assert opened == [["-a", "Google Chrome", "https://example.test/review"],
+                      ["-R", str(unpacked)], ["-a", "Google Chrome", html_file.as_uri()]], opened
 
     # Automatic registration provides a receiver without a separate command.
     registry = fixture_home / ".local/share/opencode-annotate/targets"

@@ -1,7 +1,9 @@
 import { HOST, PROTOCOL, orderedNotes, pageTitle, safeUrl, validateAnchor, validateReview } from "./protocol.mjs"
 import { openPanel, reconnectHint, resolveTargetTab, sameExtensionURL, sessionDelivery } from "./env.mjs"
+import { developmentInstall, newerDiskVersion, reloadIdleExtension } from "./update.mjs"
 
 const DELIVERY = sessionDelivery()
+const unpacked = DELIVERY ? developmentInstall(chrome) : Promise.resolve(false)
 const pageKey = async url => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url)))].map(v => v.toString(16).padStart(2, "0")).join("")
 let writes = Promise.resolve(), connectionGeneration = 0
 const serial = fn => { const next = writes.then(fn); writes = next.catch(() => {}); return next }
@@ -308,6 +310,12 @@ async function handle(message, sender) {
     return { draft }
   })
   if (message.action === "targets") return native({ action: "targets" })
+  if (message.action === "auto-reload") return serial(async () => {
+    if (sender.url !== chrome.runtime.getURL("panel.html") || !sender.documentId || !await unpacked ||
+        !await newerDiskVersion(chrome, [message.version])) return {}
+    await reloadIdleExtension(chrome, message.version, sender.documentId)
+    return {}
+  })
   if (message.action === "connection") {
     const generation = ++connectionGeneration
     const current = () => generation === connectionGeneration
@@ -315,7 +323,7 @@ async function handle(message, sender) {
     const { paired, disconnected } = await chrome.storage.local.get(["paired", "disconnected"])
     let result
     try {
-      result = await native({ action: "targets" })
+      result = await native({ action: "targets", checkForUpdate: await unpacked })
       if (!result.ok) throw new Error(result.error)
     } catch (error) {
       return { targets: [], workspaces: [], target: null, destination: paired || null, disconnected: !!disconnected, stale: !!paired, delivery: true, error: error.message }
@@ -323,7 +331,9 @@ async function handle(message, sender) {
     const targets = result.targets.filter(target => target.kind !== "workspace")
     const workspaces = result.targets.filter(target => target.kind === "workspace" && target.canCreate)
     const target = disconnected ? null : await liveTarget(paired, targets, current)
-    return { targets, workspaces, target: target || null, destination: target || paired || null, disconnected: !!disconnected, stale: !!paired && !target, delivery: true }
+    const updateVersion = await unpacked && await newerDiskVersion(chrome, result.diskVersions)
+    return { targets, workspaces, target: target || null, destination: target || paired || null, disconnected: !!disconnected, stale: !!paired && !target, delivery: true,
+      ...(updateVersion ? { updateVersion } : {}) }
   }
   if (message.action === "pair") return serial(async () => {
     connectionGeneration++

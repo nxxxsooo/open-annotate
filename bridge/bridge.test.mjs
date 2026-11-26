@@ -200,6 +200,17 @@ test("native host uses exact origin allowlist and standard framed replies", asyn
   assert.equal(result.ok, true); assert.equal(result.targets.length, 1); assert.equal(result.targets[0].sessionID, "ses_native")
   assert.equal(result.targets[0].title, "Generated title", "discovery must report the live title, not the one captured at registration")
   assert.deepEqual([result.targets[0].created, result.targets[0].updated], [1, 2])
+  assert.equal(result.diskVersions, undefined)
+  const unpacked = path.join(root, "separate-checkout")
+  const profile = path.join(root, "chrome", "Profile 4")
+  const extension = JSON.parse(await readFile(path.join(installation.extensionDirectory, "manifest.json"), "utf8"))
+  await mkdir(unpacked)
+  await mkdir(profile)
+  await writeFile(path.join(unpacked, "manifest.json"), JSON.stringify({ ...extension, version: "99.12.3" }))
+  await writeFile(path.join(profile, "Secure Preferences"), JSON.stringify({
+    extensions: { settings: { [installation.extensionID]: { location: 4, path: unpacked } } },
+  }))
+  assert.deepEqual((await exchange({ action: "targets", checkForUpdate: true })).diskVersions, ["99.12.3"])
   const paired = await exchange({ action: "info", targetID: receiver.target.id })
   assert.equal(paired.ok, true); assert.equal(paired.target.sessionID, "ses_native")
   const rejected = spawn(installation.launcher, ["chrome-extension://not-allowed/"], { stdio: ["ignore", "ignore", "pipe"] })
