@@ -3,7 +3,7 @@ import { mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { herdrCommand, readHerdrAgent, recordHerdrOutcome, resolveHerdrConversation } from "./herdr.mjs"
-import { inHerdrApp, selectHerdrApp, verifyHerdrAppConversation } from "./herdr-app.mjs"
+import { herdrAppOpener, selectHerdrApp, verifyHerdrAppConversation } from "./herdr-app.mjs"
 import { defaultInboxRoot } from "./inbox.mjs"
 
 const conversationIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
@@ -25,14 +25,36 @@ export function annotateSlash(text) {
 
 function start({ pane, conversationId, document, binary, env, pid }) {
   const cli = fileURLToPath(new URL("./cli.mjs", import.meta.url))
-  const args = pid === undefined
-    ? [cli, "herdr-slash", pane, conversationId, binary ?? ""]
-    : [cli, "herdr-app-slash", conversationId, String(pid)]
+  const isApp = pid !== undefined
+  const args = isApp
+    ? [cli, "herdr-app-slash", conversationId, String(pid)]
+    : [cli, "herdr-slash", pane, conversationId, binary ?? ""]
   if (document) args.push(document)
-  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", env })
+  const stdio = isApp ? ["ignore", "ignore", "ignore", "ipc"] : "ignore"
+  const child = spawn(process.execPath, args, { detached: true, stdio, env })
+  if (isApp) return waitForAppLaunch(child)
   return new Promise(resolve => {
     child.once("error", () => resolve(false))
     child.once("spawn", () => { child.unref(); resolve(true) })
+  })
+}
+
+function waitForAppLaunch(child) {
+  return new Promise((resolve, reject) => {
+    // Leave time for the hook to report an error before AGY's 15s deadline.
+    const timeout = setTimeout(() => {
+      if (child.connected) child.disconnect()
+      reject(new Error("timed out waiting for the Herdr.app reviewer to open"))
+    }, 10_000)
+    const fail = err => { clearTimeout(timeout); reject(err) }
+    child.once("error", fail)
+    child.once("disconnect", () => fail(new Error("reviewer launcher exited before opening")))
+    child.once("message", message => {
+      clearTimeout(timeout)
+      if (message.opened === true) resolve(true)
+      else reject(new Error(message.error))
+    })
+    child.unref()
   })
 }
 
@@ -51,13 +73,6 @@ async function claimTurn(inboxRoot, conversationId, count) {
   }
 }
 
-async function wasClaimed(inboxRoot, conversationId, count) {
-  return stat(path.join(inboxRoot, conversationId, `.slash-${count}`)).then(
-    () => true,
-    err => { if (err.code === "ENOENT") return false; throw err },
-  )
-}
-
 export async function interceptAnnotateSlash(payload, {
   env = process.env, readAgent = readHerdrAgent, command = herdrCommand, launch = start,
   inboxRoot = defaultInboxRoot(), record = recordHerdrOutcome,
@@ -74,24 +89,39 @@ export async function interceptAnnotateSlash(payload, {
       payload.initialNumSteps < 1 || !payload.conversationId) {
     return decline(`payload invocationNum=${payload.invocationNum} initialNumSteps=${payload.initialNumSteps}`)
   }
-  const useHerdrApp = !(HERDR_ENV === "1" && pane && socket) && inHerdrApp(env)
-  if (!useHerdrApp && (HERDR_ENV !== "1" || !pane || !socket)) return decline("not in a Herdr pane")
-
-  try {
-    if (useHerdrApp) {
-      if (!conversationIdPattern.test(payload.conversationId)) return decline("invalid AGY conversation ID")
-      if (await wasClaimed(inboxRoot, payload.conversationId, payload.initialNumSteps)) {
-        await record(payload.conversationId, "Herdr.app slash replay ignored")
+  const inHerdrPane = HERDR_ENV === "1" && pane && socket
+  const opener = !inHerdrPane && herdrAppOpener(env)
+  if (opener) {
+    const { conversationId, initialNumSteps, cwd } = payload
+    if (!conversationIdPattern.test(conversationId)) return decline("invalid AGY conversation ID")
+    try {
+      if (!await claimTurn(inboxRoot, conversationId, initialNumSteps)) {
+        await record(conversationId, "Herdr.app slash replay ignored")
         return "replayed"
       }
-      const opener = await selectApp(env)
-      if (!opener) return decline("Herdr.app unavailable or does not know the calling terminal")
-      const { pid } = await verifyApp(opener, payload.conversationId)
-      const document = await slashDocument(argument, payload.cwd)
-      return await launchOnce({ conversationId: payload.conversationId, document, env, pid }, payload, {
-        inboxRoot, launch, decline, record,
-      })
+      const [selection, verification, file] = await Promise.allSettled([
+        selectApp(env),
+        verifyApp(opener, conversationId),
+        slashDocument(argument, cwd),
+      ])
+      if (selection.status === "rejected") throw selection.reason
+      if (!selection.value) throw new Error("Herdr.app unavailable or does not know the calling terminal")
+      if (verification.status === "rejected") throw verification.reason
+      if (file.status === "rejected") throw file.reason
+      if (!await launch({ conversationId, document: file.value, env, pid: verification.value.pid })) {
+        throw new Error("popup launcher failed to start")
+      }
+      await record(conversationId, "Herdr.app slash reviewer launch claimed")
+      return "opened"
+    } catch (err) {
+      const reason = err?.message || String(err)
+      await record(conversationId, `Herdr.app slash error: ${reason}`)
+      return { reason }
     }
+  }
+  if (!inHerdrPane) return decline("not in a Herdr pane")
+
+  try {
     const [agent, pluginList] = await Promise.all([
       readAgent(bin, pane, 200),
       command(bin, ["plugin", "list", "--json"], 200),
@@ -125,17 +155,13 @@ async function slashDocument(argument, cwd) {
   return document
 }
 
-async function launchOnce(review, payload, { inboxRoot, launch, decline, record }) {
+async function launchOnce(review, payload, { inboxRoot, launch, decline }) {
   const release = await claimTurn(inboxRoot, payload.conversationId, payload.initialNumSteps)
-  if (!release) {
-    await record?.(payload.conversationId, "Herdr.app slash replay ignored")
-    return "replayed"
-  }
+  if (!release) return "replayed"
   let launched = false
   try {
     launched = await launch(review)
     if (!launched) return decline("popup launcher failed to start")
-    await record?.(payload.conversationId, "Herdr.app slash reviewer launch claimed")
     return "opened"
   } finally {
     if (!launched) await release()

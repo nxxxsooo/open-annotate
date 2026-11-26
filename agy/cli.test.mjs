@@ -4,7 +4,7 @@ import path from "node:path"
 import os from "node:os"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { finishTuiReview, getAdaptedThemeTokens, herdrTuiPlacement, selectTuiOpener, waitForTuiPane } from "./cli.mjs"
-import { openHerdrAppTui } from "./herdr-app.mjs"
+import { appPlacement, openHerdrAppTui } from "./herdr-app.mjs"
 import { handlePreInvocation, handleStop } from "./hooks.mjs"
 import { enqueueAnnotations } from "./inbox.mjs"
 import { bundledBinary, resolveTuiBinary } from "../tui/binary.mjs"
@@ -115,6 +115,56 @@ test("Herdr.app matches the focused pane, starts a silent child, and retries onl
     assert.deepEqual(delays, mode === "focused" ? [100] : [])
     if (mode === "changed") assert.deepEqual(commands.at(-1), ["hc", "label", "t14x", ...labels])
   }
+})
+
+test("Herdr.app uses the shown sub-agent and its host pane to determine focus", async () => {
+  const child = "t145"
+  const grandchild = "t146"
+  const layout = structuredClone(appLayout)
+  layout.spaces[0].tabs[0].terminals[0].sub_agents = [child]
+  const exec = status => async (bin, args) => {
+    if (bin === "hc") {
+      assert.deepEqual(args, ["get", grandchild, "--json"])
+      return json({ address: grandchild, state: "live", parent: child })
+    }
+    return json(args[0] === "ls" ? layout : status)
+  }
+  const placement = { host: appOpener.parent, space: "sp1", tab: "tb1" }
+  const locate = (parent, status) => appPlacement({ ...appOpener, parent }, exec(status))
+  assert.deepEqual(await locate(child, appStatus), { ...placement, focused: true })
+  assert.deepEqual(await locate(grandchild, { ...appStatus, agent: grandchild }), { ...placement, focused: true })
+  for (const diff of [
+    { agent: appOpener.parent }, { focused_pane: "p2" }, { space: "sp2" }, { tab: "tb2" }, { overlays: ["peek"] },
+  ]) {
+    assert.deepEqual(await locate(child, { ...appStatus, ...diff }), { ...placement, focused: false })
+  }
+})
+
+test("an unfocused Herdr.app sub-agent verifies its host's labels and opens in the host's tab", async () => {
+  const env = { ...appEnv, HC_TERMINAL_ID: "t145" }
+  const opener = { kind: "herdr-app", parent: env.HC_TERMINAL_ID, env }
+  const layout = structuredClone(appLayout)
+  layout.spaces[0].tabs[0].terminals[0].sub_agents = [opener.parent]
+  const argv = ["/bin/node", "/pkg/agy/cli.mjs", "tui-pane", "/review"]
+  const open = labels => openHerdrAppTui(opener, "/review", argv, {
+    exec: async (bin, args) => {
+      if (bin === "herdr-app") {
+        assert.ok(["ls", "status"].includes(args[0]), "opening in a background tab must not change focus")
+        return json(args[0] === "ls" ? layout : { ...appStatus, agent: appOpener.parent })
+      }
+      if (args[0] === "get") {
+        assert.deepEqual(args, ["get", appOpener.parent, "--json"])
+        return json({ labels })
+      }
+      assert.deepEqual(args, [
+        "run", "--bg", "--json", "--parent", opener.parent, "--no-notify", "--rm", "--cwd", "/review",
+        "--label", "herdr.space=sp1", "--label", "herdr.tab=tb1", "--", ...argv,
+      ])
+      return json({ address: "t147" })
+    },
+  })
+  assert.deepEqual(await open({ "herdr.space": "sp1", "herdr.tab": "tb1" }), { ...opener, id: "t147", peek: false })
+  await assert.rejects(open({ "herdr.space": "sp1", "herdr.tab": "tb2" }), /disagree on terminal t14w's tab/)
 })
 
 test("waiting for Herdr.app treats a finished or removed terminal as closed without Send", async t => {

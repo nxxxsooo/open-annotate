@@ -121,8 +121,7 @@ test("Herdr.app slash verifies the AGY conversation behind a PTY proxy and claim
   assert.equal(await interceptAnnotateSlash(fileTurn, options), "opened")
   assert.equal(launches.at(-1).document, document)
 
-  const next = { ...payload, initialNumSteps: 3 }
-  const declines = [
+  const failures = [
     [{ selectApp: async () => null }, /does not know the calling terminal/],
     [{ verifyApp: (opener, id) => verify(opener, id, { processes: wrappers }) }, /no AGY process under hc terminal t14w/],
     [{ verifyApp: (opener, id) => verify(opener, id, {
@@ -135,12 +134,28 @@ test("Herdr.app slash verifies the AGY conversation behind a PTY proxy and claim
     }) }, /no AGY session presence lock under hc terminal t14w/],
     [{ verifyApp: (opener, id) => verify(opener, id, { sessions: () => [{ pid: 123, conversationId: "different" }] }) }, /no longer matches/],
     [{ verifyApp: (opener, id) => verify(opener, id, { snapshot: { ...terminal, status: null } }) }, /could not determine its state/],
+    [{}, /document is not a file/, { cwd: path.dirname(document), lastUserInput: "/annotate agy" }],
+    [{ launch: async () => false }, /popup launcher failed to start/],
+    [{ launch: async () => { throw new Error("Peek command failed.") } }, /Peek command failed/],
   ]
-  for (const [overrides, reason] of declines) {
-    assert.equal(await interceptAnnotateSlash(next, { ...options, ...overrides }), false)
-    assert.match(records.at(-1), /^slash not intercepted:/)
+  for (const [index, [overrides, reason, input]] of failures.entries()) {
+    const next = { ...payload, initialNumSteps: 3 + index, ...input }
+    const intercept = p => interceptAnnotateSlash(p, { ...options, ...overrides })
+    const result = await handlePreInvocation(next, { intercept, inboxRoot })
+    assert.equal(result.terminationBehavior, "terminate")
+    assert.equal(result.injectSteps.length, 1)
+    const [step] = result.injectSteps
+    const message = step.systemMessage.systemMessage
+    assert.deepEqual(step, { systemMessage: { systemMessage: message } })
+    assert.match(message, /^Annotate could not open here: /)
+    assert.match(message, reason)
+    assert.ok(message.endsWith(". Run `agy-annotate tui` in a shell to review manually."))
+    assert.match(records.at(-1), /^Herdr.app slash error:/)
     assert.match(records.at(-1), reason)
+    assert.deepEqual(await handlePreInvocation(next, { intercept, inboxRoot }), { terminationBehavior: "terminate" })
   }
+  assert.equal(await interceptAnnotateSlash({ ...payload, invocationNum: 1 }, options), false)
+  assert.equal(await interceptAnnotateSlash({ ...payload, conversationId: "invalid" }, options), false)
   assert.equal(launches.length, 2)
 })
 

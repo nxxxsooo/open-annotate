@@ -5,11 +5,12 @@ import os from "node:os"
 
 export const agyConfigDir = () => path.join(os.homedir(), ".gemini/antigravity-cli")
 
-export function getActiveAgySessions(baseDir = agyConfigDir()) {
+export function getActiveAgySessions(baseDir = agyConfigDir(), { pids } = {}) {
   const presenceDir = path.join(baseDir, "presence")
   const dbPath = path.join(baseDir, "conversation_summaries.db")
 
-  const proc = spawnSync("lsof", ["+D", presenceDir], { encoding: "utf8" })
+  const selection = pids ? ["-a", "-p", [...pids].join(",")] : []
+  const proc = spawnSync("lsof", [...selection, "+D", presenceDir], { encoding: "utf8" })
   const stdout = proc.stdout || ""
   const lockMap = new Map()
 

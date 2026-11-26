@@ -20,31 +20,45 @@ async function json(exec, bin, args, env, timeout = 350) {
   return JSON.parse(stdout)
 }
 
-async function appPlacement({ parent, env }, exec) {
-  const { spaces } = await json(exec, "herdr-app", ["ls"], env)
-  const status = await json(exec, "herdr-app", ["status"], env)
+export async function appPlacement({ parent, env }, exec = execute) {
+  const [{ spaces }, status] = await Promise.all([
+    json(exec, "herdr-app", ["ls"], env),
+    json(exec, "herdr-app", ["status"], env),
+  ])
   if (!Array.isArray(status.overlays)) throw new Error("Herdr.app did not report its overlays.")
-  for (const space of spaces) {
-    if (space.machine !== null) continue
-    for (const tab of space.tabs) {
-      const terminal = tab.terminals.find(item => item.terminal === parent)
-      if (terminal) {
-        // status.agent can name a different agent from the focused pane.
-        // Toasts leave the pane's keyboard focus alone.
-        const focused = status.space === space.id && status.tab === tab.id &&
-          Boolean(terminal.pane) && status.focused_pane === terminal.pane &&
-          status.overlays.every(id => id === "toast")
-        return { focused, space: space.id, tab: tab.id }
-      }
+  const locations = spaces.filter(space => space.machine === null).flatMap(space =>
+    space.tabs.flatMap(tab => tab.terminals.map(host => ({ space: space.id, tab: tab.id, host }))))
+  const visited = new Set()
+  for (let id = parent; localAddress.test(id ?? "") && !visited.has(id);) {
+    visited.add(id)
+    const location = locations.find(({ host }) => host.terminal === id) ??
+      locations.find(({ host }) => host.pane && host.sub_agents?.includes(id))
+    if (location) {
+      const { space, tab, host } = location
+      // A pane's own terminal keeps its pane-based focus rule. A child
+      // shares that pane and must also be the agent shown in it.
+      const focused = status.space === space && status.tab === tab &&
+        Boolean(host.pane) && status.focused_pane === host.pane &&
+        (host.terminal === parent || status.agent === parent) &&
+        status.overlays.every(id => id === "toast")
+      return { focused, space, tab, host: host.terminal }
     }
+    // Herdr.app lists direct sub-agents only; follow hc ancestry for deeper children.
+    const terminal = await readTerminal({ env }, id, exec)
+    if (terminal.address !== id || terminal.state !== "live") break
+    id = terminal.parent
   }
-  throw new Error("Herdr.app does not know the calling terminal as a local pane.")
+  throw new Error("Herdr.app does not know the calling terminal as a local pane or sub-agent.")
+}
+
+export function herdrAppOpener(env) {
+  if (!inHerdrApp(env)) return null
+  return { kind: "herdr-app", parent: env.HC_TERMINAL_ID, env }
 }
 
 export async function selectHerdrApp(env, exec = execute) {
-  if (!inHerdrApp(env)) return null
-  const opener = { kind: "herdr-app", parent: env.HC_TERMINAL_ID, env }
-  return appPlacement(opener, exec).then(() => opener, () => null)
+  const opener = herdrAppOpener(env)
+  return opener && appPlacement(opener, exec).then(() => opener, () => null)
 }
 
 async function readTerminal({ env }, terminal, exec) {
@@ -52,9 +66,9 @@ async function readTerminal({ env }, terminal, exec) {
 }
 
 async function tabLabels(opener, placement, exec) {
-  const { labels } = await readTerminal(opener, opener.parent, exec)
+  const { labels } = await readTerminal(opener, placement.host, exec)
   if (labels?.["herdr.space"] !== placement.space || labels?.["herdr.tab"] !== placement.tab) {
-    throw new Error("Herdr.app and hc disagree on the calling terminal's tab.")
+    throw new Error(`Herdr.app and hc disagree on terminal ${placement.host}'s tab.`)
   }
   return [`herdr.space=${placement.space}`, `herdr.tab=${placement.tab}`]
 }
@@ -131,17 +145,19 @@ export async function verifyHerdrAppConversation(opener, conversationId, {
   exec = execute, sessions = getActiveAgySessions, pid,
 } = {}) {
   const { parent, env } = opener
-  const terminal = await readTerminal(opener, parent, exec)
+  const [terminal, { stdout }] = await Promise.all([
+    readTerminal(opener, parent, exec),
+    exec("ps", ["-A", "-o", "pid=,ppid=,comm="], { env, timeout: 350 }),
+  ])
   const root = terminal.pid
   if (terminal.address !== parent || terminal.state !== "live" || !Number.isSafeInteger(root) || root <= 0) {
     throw new Error(`hc does not report a live process for terminal ${parent}`)
   }
   // The foreground can be a shell or PTY proxy. Use the terminal's own
   // process as the root and require an AGY presence lock within its tree.
-  const { stdout } = await exec("ps", ["-A", "-o", "pid=,ppid=,comm="], { env, timeout: 350 })
   const agyPids = agyProcessesUnder(root, stdout)
   if (!agyPids.size) throw new Error(`no AGY process under hc terminal ${parent}`)
-  const matches = sessions().filter(session => agyPids.has(session.pid))
+  const matches = sessions(undefined, { pids: agyPids }).filter(session => agyPids.has(session.pid))
   if (!matches.length) throw new Error(`no AGY session presence lock under hc terminal ${parent}`)
   if (matches.length > 1) throw new Error(`${matches.length} AGY sessions under hc terminal ${parent}`)
   const [match] = matches

@@ -14,7 +14,7 @@ import { prepareTheme } from "../theme.mjs"
 import { createInputSource } from "../input-source.mjs"
 import { resolveTuiBinary } from "../tui/binary.mjs"
 import { captureHerdrConversation, deliverHerdrReview, focusedPane, herdrCommand, readHerdrAgent, recordHerdrOutcome } from "./herdr.mjs"
-import { deliverHerdrAppReview, herdrAppTerminalGone, openHerdrAppTui, selectHerdrApp, verifyHerdrAppConversation } from "./herdr-app.mjs"
+import { deliverHerdrAppReview, herdrAppOpener, herdrAppTerminalGone, openHerdrAppTui, selectHerdrApp } from "./herdr-app.mjs"
 
 const execute = promisify(execFile)
 
@@ -333,26 +333,38 @@ async function cmdHerdrReview(options, shortcut) {
 }
 
 async function cmdHerdrAppSlash(conversationId, pid, document) {
+  let opened = false
+  const reportLaunch = message => {
+    if (!process.connected) return false
+    process.send(message, () => {
+      if (process.connected) process.disconnect()
+    })
+    return true
+  }
   try {
-    if (!conversationId || !Number.isSafeInteger(pid) || (document && !path.isAbsolute(document))) {
+    const opener = herdrAppOpener(process.env)
+    if (!opener || !conversationId || !Number.isSafeInteger(pid) || (document && !path.isAbsolute(document))) {
       throw new Error("Invalid AGY Herdr.app slash launch.")
     }
-    const opener = await selectHerdrApp(process.env)
-    if (!opener) throw new Error("Herdr.app no longer knows the AGY pane.")
-    await verifyHerdrAppConversation(opener, conversationId, { pid })
     const session = { conversationId, title: `AGY ${conversationId.slice(0, 8)}` }
     const status = await reviewTui(document, {
       session, binary: path.resolve(resolveTuiBinary()), opener,
       deliver: batch => deliverHerdrAppReview(opener, conversationId, pid, batch),
+      beforeOpen: () => {
+        if (!process.connected) throw new Error("The AGY hook stopped waiting for the reviewer.")
+      },
+      onOpen: () => { opened = reportLaunch({ opened: true }) },
     })
     await recordHerdrOutcome(conversationId, `Herdr.app slash: ${status}`)
   } catch (err) {
-    await recordHerdrOutcome(conversationId, `Herdr.app slash error: ${err.message}`)
+    if (opened || !reportLaunch({ error: err.message })) {
+      await recordHerdrOutcome(conversationId, `Herdr.app slash error: ${err.message}`)
+    }
     throw err
   }
 }
 
-async function reviewTui(targetPath, { session, binary, opener, captured, deliver }) {
+async function reviewTui(targetPath, { session, binary, opener, captured, deliver, beforeOpen, onOpen }) {
   let sourceText = ""
   let snapshotName = "last-reply.md"
   let filePath = null
@@ -431,7 +443,9 @@ async function reviewTui(targetPath, { session, binary, opener, captured, delive
       } else if (opener.kind === "herdr") {
         herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
       } else if (opener.kind === "herdr-app") {
+        beforeOpen?.()
         herdrPane = await openHerdrAppTui(opener, tempDir, [process.execPath, fileURLToPath(import.meta.url), "tui-pane", tempDir])
+        onOpen?.()
         // The reviewer's auto theme can query the background as soon as it
         // starts. Let the app publish its terminal colours after the peek.
         if (herdrPane.peek) await wait(250)
