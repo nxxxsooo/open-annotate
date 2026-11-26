@@ -228,6 +228,16 @@ function runReviewer({ binary, snapshotFile, env }, directory) {
   })
 }
 
+const herdrAppReadyFile = directory => path.join(directory, "data", "herdr-app-ready")
+
+async function waitForHerdrAppReady(directory) {
+  const deadline = Date.now() + 10_000
+  while (await readOptional(herdrAppReadyFile(directory)) === null) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for Herdr.app to show the reviewer.")
+    await wait(50)
+  }
+}
+
 async function runTuiPane(directory) {
   if (!directory || !path.isAbsolute(directory)) throw new Error("Missing AGY review directory.")
   let result = "closed"
@@ -236,6 +246,7 @@ async function runTuiPane(directory) {
     if (request.sourcePane && focusedPane(process.env) !== request.sourcePane) {
       throw new Error("Herdr focus changed before the popup opened. Open Annotate again from the AGY pane.")
     }
+    if (request.waitForHerdrApp) await waitForHerdrAppReady(directory)
     await runReviewer(request, directory)
   } catch (err) {
     result = err.message
@@ -394,7 +405,9 @@ async function reviewTui(targetPath, { session, binary, opener, captured, delive
       env.PLANNOTATOR_TUI_INPUT_SOURCE = inputSource.command
       env.PLANNOTATOR_TUI_TEXT_INPUT_SOURCE = textSource
     }
-    const request = { binary, snapshotFile, env, sourcePane: captured?.pane }
+    const request = {
+      binary, snapshotFile, env, sourcePane: captured?.pane, waitForHerdrApp: opener.kind === "herdr-app",
+    }
     if (opener.kind === "tty") {
       await runReviewer(request, tempDir)
     } else {
@@ -419,6 +432,10 @@ async function reviewTui(targetPath, { session, binary, opener, captured, delive
         herdrPane = { bin: opener.bin, id: await openHerdrTui(opener, tempDir) }
       } else if (opener.kind === "herdr-app") {
         herdrPane = await openHerdrAppTui(opener, tempDir, [process.execPath, fileURLToPath(import.meta.url), "tui-pane", tempDir])
+        // The reviewer's auto theme can query the background as soon as it
+        // starts. Let the app publish its terminal colours after the peek.
+        if (herdrPane.peek) await wait(250)
+        await writeFile(herdrAppReadyFile(tempDir), "", { mode: 0o600 })
         placement = herdrPane.peek ? "peek in Herdr.app" : "in the AGY tab in Herdr.app"
       } else await openTuiWindow(tempDir, session.title)
       console.log(`Opened Annotate ${placement}. Waiting for Send or quit…`)

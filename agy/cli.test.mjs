@@ -104,15 +104,15 @@ test("Herdr.app matches the focused pane, starts a silent child, and retries onl
     if (mode === "never discovered") {
       await assert.rejects(open, /no running terminal "t14x"/)
       assert.deepEqual(commands.at(-1), ["hc", "kill", "t14x"])
-      assert.equal(peeks, 5)
-      assert.deepEqual(delays, [80, 80, 80, 80])
+      assert.equal(peeks, 30)
+      assert.deepEqual(delays, Array(29).fill(100))
       continue
     }
     assert.deepEqual(await open, { ...appOpener, id: "t14x", peek: mode === "focused" })
     const placement = mode === "unfocused" ? labels.flatMap(label => ["--label", label]) : []
     assert.deepEqual(commands.find(([, action]) => action === "run"), ["hc", ...run, ...placement, "--", ...argv])
     assert.equal(peeks, mode === "focused" ? 2 : 0)
-    assert.deepEqual(delays, mode === "focused" ? [80] : [])
+    assert.deepEqual(delays, mode === "focused" ? [100] : [])
     if (mode === "changed") assert.deepEqual(commands.at(-1), ["hc", "label", "t14x", ...labels])
   }
 })

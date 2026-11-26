@@ -7,6 +7,8 @@ import { getActiveAgySessions } from "./session.mjs"
 
 const execute = promisify(execFile)
 const localAddress = /^t[0-9a-z]+$/
+const peekAttempts = 30
+const peekPause = 100
 
 export function inHerdrApp(env) {
   // A local app terminal has a core address, not a name or a remote address.
@@ -77,6 +79,7 @@ export async function openHerdrAppTui(opener, directory, argv, { exec = execute,
     if (labels.length) return { ...opener, id, peek: false }
 
     // A newly spawned child may take a few frames to appear in the app.
+    const retryUntil = performance.now() + peekAttempts * peekPause
     for (let attempt = 0; ; attempt++) {
       const current = await appPlacement(opener, exec)
       if (!current.focused) {
@@ -91,8 +94,8 @@ export async function openHerdrAppTui(opener, directory, argv, { exec = execute,
       } catch (err) {
         const detail = commandError(err) ?? err.message
         const notReady = detail === `no running terminal "${id}"` || detail === "no running terminal"
-        if (attempt === 4 || !notReady) throw err
-        await pause(80)
+        if (!notReady || attempt + 1 === peekAttempts || performance.now() + peekPause >= retryUntil) throw err
+        await pause(peekPause)
       }
     }
   } catch (err) {
