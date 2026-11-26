@@ -1,5 +1,25 @@
 # Releasing
 
+## 0.21.0 — Chrome companion setup and updates — 2026-11-26
+
+Mingjian tried the Chrome companion change and confirmed “works now.” OpenCode
+and AGY guide setup when the companion is missing or disabled. Browser protocol
+11 adds automatic reload for idle unpacked installations when their manifest
+version increases. A one-time reload enables the feature on older installations.
+
+| Surface | Verified state |
+|---|---|
+| Source | Accepted change `e60584e`; release prep and tag target `9a09cba3ac22b8193e60f8e55648cdba321c9a4c` (`v0.21.0`). |
+| Local checks | Native reviewer build, formatting/Clippy, 405 Rust tests, `npm run check` (120 Node tests and a 70-file host-only pack dry-run), the package verifier regression, 23 isolated OpenCode smoke scenarios and 59 isolated Chromium scenarios passed. |
+| CI | [Accepted-change run `45785004503`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45785004503) and [release-prep run `45785765050`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45785765050) passed all five native targets, the Safari build and package checks. |
+| Publish / GitHub Release | [Trusted publishing run `45786518728`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45786518728) succeeded; [GitHub Release v0.21.0](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.21.0) is public. All five native artifact ZIPs matched their Actions SHA-256 digests. |
+| Registry | npm `@nxxxsooo/opencode-annotate@0.21.0` is `latest`. The 74-file archive matched registry SHA-512/SHA-1, `gitHead` and signed provenance for the tagged commit, package and extension version 0.21.0, and browser protocol 11. All file bytes and executable bits matched the package reconstructed from the tagged source and the five publish artifacts. All 23 isolated OpenCode smoke scenarios passed again using the published plugin and reviewer. |
+| Maintainer install | `opencode plugin list` resolves this checkout at the tagged commit before this docs-only receipt. Its rebuilt `tui/bin/darwin-arm64/annotate-tui` reports 0.21.0, and the unpacked companion directory on disk is at 0.21.0. |
+| AGY / Herdr | The three AGY hook paths, skill symlink and on-disk linked Herdr manifest point to this checkout. |
+
+No live model turn, daily Chrome reload, live AGY/Herdr pane or installed Safari
+UI was exercised during release verification.
+
 ## 0.20.1 — Send AGY notes on quit — 2026-11-24
 
 Mingjian dev-tested the build in real AGY/Herdr on 2026-11-24, confirmed that
