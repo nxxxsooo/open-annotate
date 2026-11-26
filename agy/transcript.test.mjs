@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
-import { extractAgyReplies, latestCompletedReply, cleanModelContent } from "./transcript.mjs"
+import { extractAgyReplies, latestCompletedReply } from "./transcript.mjs"
 
 async function makeFixture(t) {
   const base = path.join(os.homedir(), ".cache")
@@ -74,4 +74,62 @@ test("extractAgyReplies extracts completed and in-progress replies, handling tru
 test("extractAgyReplies returns empty array when transcript does not exist", async () => {
   const replies = await extractAgyReplies("/non/existent/path")
   assert.deepEqual(replies, [])
+})
+
+const userInput = (step_index, request) => ({
+  step_index, source: "USER_EXPLICIT", type: "USER_INPUT", status: "DONE",
+  content: `<USER_REQUEST>\n${request}\n</USER_REQUEST>\n<ADDITIONAL_METADATA>fixture</ADDITIONAL_METADATA>`,
+})
+const modelReply = (step_index, content, tool_calls = []) => ({
+  step_index, source: "MODEL", type: "PLANNER_RESPONSE", status: "DONE", content, tool_calls,
+})
+const writeLog = (logDir, steps, name = "transcript.jsonl") =>
+  writeFile(path.join(logDir, name), steps.map(step => JSON.stringify(step)).join("\n"))
+
+test("repeated /annotate turns are excluded from both reply views (steps 212–248)", async t => {
+  const { root, logDir } = await makeFixture(t)
+  const steps = [userInput(210, "What changed?"), modelReply(212, "The actual answer.")]
+  for (const [input, progress, reply] of [[213, 216, 224], [225, 228, 236], [237, 239, 248]]) {
+    steps.push(
+      userInput(input, "/annotate"),
+      modelReply(progress, "Starting the reviewer.", [{ name: "run_command" }]),
+      modelReply(reply, "Annotate opened; use Send when done."),
+    )
+  }
+  await writeLog(logDir, steps)
+  assert.deepEqual((await extractAgyReplies(root)).map(reply => reply.id), ["212"])
+  assert.deepEqual((await extractAgyReplies(root, { latestOnly: true })).map(reply => reply.id), ["212"])
+})
+
+test("a normal reply after /annotate notes.md is the latest reply even without trailing input", async t => {
+  const { root, logDir } = await makeFixture(t)
+  const steps = [
+    userInput(1, "First question"),
+    modelReply(2, "First answer"),
+    userInput(3, "/annotate notes.md"),
+    modelReply(4, "The document reviewer opened."),
+  ]
+  await writeLog(logDir, steps)
+  assert.deepEqual((await extractAgyReplies(root, { latestOnly: true })).map(reply => reply.id), ["2"])
+  steps.push(userInput(5, "Follow-up question"), modelReply(6, "Follow-up answer"))
+  await writeLog(logDir, steps)
+  assert.deepEqual((await extractAgyReplies(root, { latestOnly: true })).map(reply => reply.id), ["6"])
+  assert.deepEqual((await extractAgyReplies(root)).map(reply => reply.id), ["6", "2"])
+})
+
+test("truncated USER_INPUT is restored before filtering; accepted replies keep their full content", async t => {
+  const { root, logDir } = await makeFixture(t)
+  const truncated = { truncated_fields: ["content"] }
+  const actual = modelReply(2, "This is the complete answer.")
+  const review = userInput(3, "/annotate notes.md")
+  await writeLog(logDir, [
+    { ...actual, ...truncated, content: "This is…" },
+    { ...review, ...truncated, content: "<USER_REQUEST>\n/ann…" },
+    modelReply(4, "The reviewer opened."),
+  ])
+  await writeLog(logDir, [actual, review], "transcript_full.jsonl")
+  for (const latestOnly of [true, false]) {
+    const replies = await extractAgyReplies(root, { latestOnly })
+    assert.deepEqual(replies.map(({ id, text }) => [id, text]), [["2", actual.content]])
+  }
 })

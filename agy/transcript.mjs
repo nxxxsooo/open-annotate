@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { annotateSlash } from "./slash.mjs"
 
 export const defaultBrainDir = (conversationId, baseDir = path.join(os.homedir(), ".gemini/antigravity-cli/brain")) =>
   path.join(baseDir, conversationId)
@@ -35,6 +36,33 @@ export async function readFullStep(brainDir, stepIndex) {
   return null
 }
 
+async function stepContent(brainDir, step) {
+  if (step.truncated_fields?.includes("content")) {
+    const full = await readFullStep(brainDir, step.step_index)
+    if (full?.content) return full.content
+  }
+  return step.content || ""
+}
+
+async function isAnnotateTurn(brainDir, input) {
+  const content = (await stepContent(brainDir, input)).trim()
+  const request = /^<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(content)?.[1]
+  return annotateSlash((request ?? content).trim()) !== undefined
+}
+
+async function renderReply(brainDir, step, latestOnly) {
+  const hasToolCalls = Boolean(step.tool_calls?.length)
+  const cleaned = cleanModelContent(await stepContent(brainDir, step))
+  if (!cleaned && (hasToolCalls || latestOnly)) return null
+  return {
+    id: String(step.step_index),
+    text: cleaned,
+    progress: hasToolCalls,
+    created: Date.parse(step.created_at) || Date.now(),
+    toolCalls: step.tool_calls?.map(t => t.name) || [],
+  }
+}
+
 export async function extractAgyReplies(brainDir, { signal, latestOnly = false } = {}) {
   const logPath = path.join(brainDir, ".system_generated/logs/transcript.jsonl")
   let text
@@ -47,33 +75,27 @@ export async function extractAgyReplies(brainDir, { signal, latestOnly = false }
 
   const lines = text.split("\n")
   const replies = []
+  const candidates = []
 
-  for (let i = lines.length - 1; i >= 0; i--) {
+  // Walking backward, a turn's replies come before the input that started it.
+  // Flush at the start of the file as well, for logs with no preceding input.
+  for (let i = lines.length - 1; i >= -1; i--) {
     signal?.throwIfAborted()
     const step = parseTranscriptLine(lines[i])
-    if (!step) continue
-    if (step.source !== "MODEL" || step.type !== "PLANNER_RESPONSE" || step.status !== "DONE") continue
-
-    const hasToolCalls = Array.isArray(step.tool_calls) && step.tool_calls.length > 0
-    if (latestOnly && hasToolCalls) continue
-    let content = step.content || ""
-    if (step.truncated_fields && step.truncated_fields.includes("content")) {
-      const full = await readFullStep(brainDir, step.step_index)
-      if (full && full.content) content = full.content
+    if (i === -1 || step?.type === "USER_INPUT") {
+      if (candidates.length && (!step || !await isAnnotateTurn(brainDir, step))) {
+        for (const candidate of candidates) {
+          signal?.throwIfAborted()
+          const reply = await renderReply(brainDir, candidate, latestOnly)
+          if (!reply) continue
+          replies.push(reply)
+          if (latestOnly) return replies
+        }
+      }
+      candidates.length = 0
+    } else if (step?.source === "MODEL" && step.type === "PLANNER_RESPONSE" && step.status === "DONE") {
+      if (!latestOnly || !step.tool_calls?.length) candidates.push(step)
     }
-
-    const cleaned = cleanModelContent(content)
-    if (!cleaned && hasToolCalls) continue
-    if (latestOnly && !cleaned) continue
-
-    replies.push({
-      id: String(step.step_index),
-      text: cleaned,
-      progress: hasToolCalls,
-      created: Date.parse(step.created_at) || Date.now(),
-      toolCalls: step.tool_calls?.map(t => t.name) || [],
-    })
-    if (latestOnly) break
   }
 
   return replies
