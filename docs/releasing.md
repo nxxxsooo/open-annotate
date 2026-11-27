@@ -1,5 +1,26 @@
 # Releasing
 
+## 0.21.1 — AGY review in Herdr.app — 2026-11-27
+
+Mingjian tested `/annotate` in an AGY pane in Herdr.app on 2026-11-26 at
+21:03 local time. The reviewer opened with no model step, and “Looks good”
+returned to the same conversation at transcript step 104. He approved shipping
+on 2026-11-27. In a separate throwaway sub-agent test (`bc886b4c…`), the
+reviewer opened in the host tab without taking focus, and Ctrl+S delivered a
+note to that conversation as explicit user input. A floating peek for a
+sub-agent the person is viewing remains unverified: Herdr.app 0.1.18 does not
+identify the shown or peeked child in its status. Browser protocol remains 11.
+
+| Surface | Verified state |
+|---|---|
+| Source | [PR #15](https://github.com/nxxxsooo/opencode-annotate/pull/15), accepted commits `70e7216` through `951aace`, release prep `9eaffe5`, merged/tagged commit `4375dc2c299b727150876adbb78456f4c5ecd9cd` (`v0.21.1`). |
+| Local checks | Native reviewer build, formatting/Clippy and 405 Rust tests, `npm run check` (133 Node tests and a 71-file host-only pack dry-run), and all 23 isolated OpenCode smoke scenarios passed. |
+| CI | [PR run `45925570621`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45925570621) and [main run `45926167927`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45926167927) passed all five native targets, the Safari build and package checks. |
+| Publish / GitHub Release | [Trusted publishing run `45926624330`](https://github.com/nxxxsooo/opencode-annotate/actions/runs/45926624330) succeeded; [GitHub Release v0.21.1](https://github.com/nxxxsooo/opencode-annotate/releases/tag/v0.21.1) is public. All five native artifact ZIPs matched their Actions SHA-256 digests. |
+| Registry | npm `@nxxxsooo/opencode-annotate@0.21.1` is `latest`. The 75-file archive matched registry SHA-512/SHA-1, `gitHead` and verified signed provenance for the tagged commit and publish run. Package and extension versions are 0.21.1 and browser protocol is 11. All file bytes and executable bits matched the package reconstructed from tagged source and the five publish artifacts. All 23 isolated OpenCode smoke scenarios also passed with the published plugin and reviewer. |
+| Maintainer install | `opencode plugin list` resolves this checkout, fast-forwarded to the tagged commit before this docs-only receipt. Its rebuilt `tui/bin/darwin-arm64/annotate-tui` reports 0.21.1. |
+| AGY / Herdr | All three AGY hooks, the `annotate` skill symlink and the enabled Herdr manifest resolve this checkout. No live pane was driven during release verification. |
+
 ## 0.21.0 — Chrome companion setup and updates — 2026-11-26
 
 Mingjian tried the Chrome companion change and confirmed “works now.” OpenCode
