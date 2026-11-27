@@ -1,5 +1,23 @@
 # Review captures
 
+## Dracula captures (0.17.0, 2026-11-16)
+
+These are the same files the project website uses, copied byte for byte. They are real
+captures of the **0.17.0** native reviewer in Ghostty 1.4.0, with the Dracula theme,
+JetBrainsMonoNL Nerd Font Mono at 24 pt and a 104 × 26 grid. The document is synthetic.
+
+- `cover-dracula-full-20261116.webp`: the full window with two annotations and the reaction
+  toolbar, 1200 × 675.
+- `terminal-review-dracula-20261116.gif`: a timed key sequence in one real window (select,
+  react, select, type a comment, save, select a third passage), ending with
+  “Send 2 back (q)”. It is 1120 × 630, 8.56 s and 67 frames, and loops. It contains only real
+  frames; the final hold is moved to the start so the first frame matches the poster.
+
+The recording and capture scripts open a native terminal window, so they live with the
+design sources rather than in this repository.
+
+## Earlier captures (0.13.0)
+
 Both assets show the published **@nxxxsooo/opencode-annotate 0.13.0** UI
 (npm `gitHead` `d0f2077dedd519a00da3aca5c8de878edd47efe0`). All page text,
 document text, feedback and session labels are synthetic.
