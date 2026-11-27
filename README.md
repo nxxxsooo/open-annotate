@@ -123,6 +123,11 @@ sending. Claude, Codex, Pi, and OpenCode use the existing `herdr last`
 route. With the AGY hooks installed, `/annotate` can open the same popup before
 the model runs; the skill remains available as a fallback.
 
+Herdr.app (herdr-core) uses a floating peek when it identifies the calling AGY
+terminal as focused. Otherwise, it opens a reviewer pane in the caller's tab,
+or in the host's tab for a sub-agent, without switching focus. Herdr.app does
+not use the Herdr TUI plugin manifest.
+
 Run the bundled `annotate-tui` directly from a Herdr pane. Herdr needs an enabled
 `annotate` plugin with a `doc` pane entrypoint; see the [TUI setup](tui/README.md#herdr).
 OpenCode's `/annotate` keeps its own session delivery, even when OpenCode runs in Herdr.
@@ -160,10 +165,13 @@ documents and webpages.
 
 ## Antigravity (AGY) support
 
-In a configured Herdr AGY pane, `/annotate` opens a native overlay before the
-model runs. `prefix+a` opens the latest reply, and `/annotate <local-document>`
-can review a file. Outside Herdr on macOS, the skill opens Ghostty or Terminal
-for text reviews. URL and HTML targets use the browser companion.
+In a configured Herdr TUI pane, `/annotate` opens a native overlay before the
+model runs and `prefix+a` opens the latest reply. With the hooks installed,
+Herdr.app handles `/annotate` and `/annotate <local-document>` in panes and
+sub-agents. If the hook cannot verify the conversation or open the reviewer,
+it ends the turn with a visible reason without running the model. Outside
+Herdr on macOS, the skill uses Ghostty or Terminal. URL and HTML targets use
+the browser companion.
 
 Set up AGY manually from one installed package (`npm install -g @nxxxsooo/opencode-annotate`;
 find the package under `npm root -g`) or a checkout with `npm run build:tui`:
@@ -172,13 +180,14 @@ find the package under `npm root -g`) or a checkout with `npm run build:tui`:
 2. Merge the `agy-annotate` entries from `agy/hooks.json` into
    `~/.gemini/config/hooks.json`, replacing `./hooks.mjs` in all three commands
    with the absolute path to `agy/hooks.mjs` from that installation.
-3. For Herdr, follow the [manifest and keybinding setup](tui/README.md#herdr)
+3. For the Herdr TUI, follow the [manifest and keybinding setup](tui/README.md#herdr)
    using the CLI and native reviewer from the same installation.
 
 **Send** (`Ctrl+S` or the Send button) returns feedback to the captured AGY
-conversation. In Herdr it starts a turn if AGY is idle or done, or queues
-feedback for its lifecycle hooks if AGY is working. `q` sends pending notes and
-closes; with no notes it just closes. `Ctrl+C` closes without sending.
+conversation. Direct review in the Herdr TUI or Herdr.app starts a turn if AGY
+is idle or done, or queues feedback if AGY is working. The skill queues feedback
+for the AGY lifecycle hooks. `q` sends pending notes and closes; with no notes it
+just closes. `Ctrl+C` closes without sending.
 
 - **CLI Commands**:
   ```sh

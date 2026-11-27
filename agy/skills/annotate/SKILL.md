@@ -7,7 +7,7 @@ description: Review assistant replies or local documents in the bundled Annotate
 
 Use this skill when the user runs `/annotate` or asks to annotate assistant responses, documents, or webpages.
 
-In a configured Herdr AGY pane, `/annotate` and `/annotate <local-document>` can be handled directly by the PreInvocation hook before the model runs. The Herdr shortcut `prefix+a` opens the latest reply the same way. These direct actions do not need the skill.
+In a configured Herdr AGY pane, the PreInvocation hook can handle `/annotate` and `/annotate <local-document>` before the model runs. In Herdr.app this requires hc to report a verifiable AGY process and state. The Herdr TUI shortcut `prefix+a` opens the latest reply.
 
 ## Execution Guide for the Agent
 
@@ -18,7 +18,7 @@ Run the command:
 ```bash
 agy-annotate tui
 ```
-This opens the bundled reviewer in Herdr or in Ghostty/Terminal outside Herdr. Keep the command running until the user finishes. **Send** (`Ctrl+S` or the Send button) delivers feedback to the captured conversation. `q` sends pending notes and closes; with no notes it just closes. `Ctrl+C` closes without sending. The command returns status only. Wait for delivered annotations before acting on them.
+This opens the bundled reviewer in Herdr, as a peek in the focused AGY tab in Herdr.app (or in the background AGY tab), or in Ghostty/Terminal outside Herdr. Keep the command running until the user finishes. **Send** (`Ctrl+S` or the Send button) delivers feedback to the captured conversation. `q` sends pending notes and closes; with no notes it just closes. `Ctrl+C` closes without sending. The command returns status only. Wait for delivered annotations before acting on them.
 
 ### 2. When the user specifies a document (e.g., `/annotate path/to/doc.md`):
 Run the command:

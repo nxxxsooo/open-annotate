@@ -4,6 +4,7 @@ import path from "node:path"
 import { dequeueAnnotations, defaultInboxRoot } from "./inbox.mjs"
 import { listTargets, registryRoot } from "../bridge/receiver.mjs"
 import { annotateSlash, interceptAnnotateSlash } from "./slash.mjs"
+import { inHerdrApp } from "./herdr-app.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -44,12 +45,11 @@ export async function handleSessionStart(payload, { root = registryRoot(), inbox
   return {}
 }
 
-const openedStep = {
-  systemMessage: {
-    systemMessage: "",
-    metadata: { user_markdown: "Annotate opened. `q` sends notes; `Ctrl+C` discards them." },
-  },
-}
+// AGY's hook caller panicked ("cannot convert string to message") on this step
+// when it carried `metadata.user_markdown`, then dropped the whole result,
+// termination included, and ran the model. Keep the step to plain fields.
+const systemStep = systemMessage => ({ systemMessage: { systemMessage } })
+const openedStep = systemStep("Annotate opened for the previous reply. Any feedback arrives as a user message.")
 
 export async function handlePreInvocation(payload, { inboxRoot = defaultInboxRoot(), intercept = interceptAnnotateSlash } = {}) {
   const conversationId = payload.conversationId
@@ -58,6 +58,11 @@ export async function handlePreInvocation(payload, { inboxRoot = defaultInboxRoo
   // AGY's prompt ignores an idle update that adds no step after the user's
   // input and keeps spinning, so the first termination shows one UI-only step.
   if (intercepted === "opened") return { injectSteps: [openedStep], terminationBehavior: "terminate" }
+  if (intercepted?.reason) {
+    const reason = intercepted.reason.replace(/\s+/g, " ").trim().replace(/\.$/, "")
+    const step = systemStep(`Annotate could not open here: ${reason}. Run \`agy-annotate tui\` in a shell to review manually.`)
+    return { injectSteps: [step], terminationBehavior: "terminate" }
+  }
   if (intercepted) return { terminationBehavior: "terminate" }
 
   const dequeued = await dequeueAnnotations(conversationId, inboxRoot)
@@ -78,7 +83,7 @@ export async function handleStop(payload, { inboxRoot = defaultInboxRoot(), env 
   const conversationId = payload.conversationId
   if (!conversationId) return {}
   // Draining here would restart the model immediately after slash interception.
-  if (env.HERDR_ENV === "1" && env.HERDR_PANE_ID && payload.terminationReason === "TERMINAL_CUSTOM_HOOK" &&
+  if (((env.HERDR_ENV === "1" && env.HERDR_PANE_ID) || inHerdrApp(env)) && payload.terminationReason === "TERMINAL_CUSTOM_HOOK" &&
       annotateSlash(payload.lastUserInput) !== undefined) {
     return {}
   }

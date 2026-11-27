@@ -3,7 +3,10 @@ import { mkdir, rm, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { herdrCommand, readHerdrAgent, recordHerdrOutcome, resolveHerdrConversation } from "./herdr.mjs"
+import { appPlacement, herdrAppOpener, herdrAppSnapshot, verifyHerdrAppConversation } from "./herdr-app.mjs"
 import { defaultInboxRoot } from "./inbox.mjs"
+
+const conversationIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 
 export function annotateSlash(text) {
   if (typeof text !== "string" || /[\r\n\0]/.test(text)) return undefined
@@ -20,14 +23,38 @@ export function annotateSlash(text) {
   return argument
 }
 
-function start({ pane, conversationId, document, binary, env }) {
+function start({ pane, conversationId, document, binary, env, pid }) {
   const cli = fileURLToPath(new URL("./cli.mjs", import.meta.url))
-  const args = [cli, "herdr-slash", pane, conversationId, binary ?? ""]
+  const isApp = pid !== undefined
+  const args = isApp
+    ? [cli, "herdr-app-slash", conversationId, String(pid)]
+    : [cli, "herdr-slash", pane, conversationId, binary ?? ""]
   if (document) args.push(document)
-  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", env })
+  const stdio = isApp ? ["ignore", "ignore", "ignore", "ipc"] : "ignore"
+  const child = spawn(process.execPath, args, { detached: true, stdio, env })
+  if (isApp) return waitForAppLaunch(child)
   return new Promise(resolve => {
     child.once("error", () => resolve(false))
     child.once("spawn", () => { child.unref(); resolve(true) })
+  })
+}
+
+function waitForAppLaunch(child) {
+  return new Promise((resolve, reject) => {
+    // Leave time for the hook to report an error before AGY's 15s deadline.
+    const timeout = setTimeout(() => {
+      if (child.connected) child.disconnect()
+      reject(new Error("timed out waiting for the Herdr.app reviewer to open"))
+    }, 10_000)
+    const fail = err => { clearTimeout(timeout); reject(err) }
+    child.once("error", fail)
+    child.once("disconnect", () => fail(new Error("reviewer launcher exited before opening")))
+    child.once("message", message => {
+      clearTimeout(timeout)
+      if (message.opened === true) resolve(true)
+      else reject(Object.assign(new Error(message.error), { snapshot: message.snapshot }))
+    })
+    child.unref()
   })
 }
 
@@ -49,6 +76,7 @@ async function claimTurn(inboxRoot, conversationId, count) {
 export async function interceptAnnotateSlash(payload, {
   env = process.env, readAgent = readHerdrAgent, command = herdrCommand, launch = start,
   inboxRoot = defaultInboxRoot(), record = recordHerdrOutcome,
+  placeApp = appPlacement, verifyApp = verifyHerdrAppConversation, snapshotApp = herdrAppSnapshot,
 } = {}) {
   const argument = annotateSlash(payload.lastUserInput)
   if (argument === undefined) return false
@@ -61,7 +89,37 @@ export async function interceptAnnotateSlash(payload, {
       payload.initialNumSteps < 1 || !payload.conversationId) {
     return decline(`payload invocationNum=${payload.invocationNum} initialNumSteps=${payload.initialNumSteps}`)
   }
-  if (HERDR_ENV !== "1" || !pane || !socket) return decline("not in a Herdr pane")
+  const inHerdrPane = HERDR_ENV === "1" && pane && socket
+  const opener = !inHerdrPane && herdrAppOpener(env)
+  if (opener) {
+    const { conversationId, initialNumSteps, cwd } = payload
+    if (!conversationIdPattern.test(conversationId)) return decline("invalid AGY conversation ID")
+    try {
+      if (!await claimTurn(inboxRoot, conversationId, initialNumSteps)) {
+        await record(conversationId, "Herdr.app slash replay ignored")
+        return "replayed"
+      }
+      const [selection, verification, file] = await Promise.allSettled([
+        placeApp(opener),
+        verifyApp(opener, conversationId),
+        slashDocument(argument, cwd),
+      ])
+      if (selection.status === "rejected") throw selection.reason
+      if (verification.status === "rejected") throw verification.reason
+      if (file.status === "rejected") throw file.reason
+      if (!await launch({ conversationId, document: file.value, env, pid: verification.value.pid })) {
+        throw new Error("popup launcher failed to start")
+      }
+      await record(conversationId, "Herdr.app slash reviewer launch claimed")
+      return "opened"
+    } catch (err) {
+      const reason = err?.message || String(err)
+      const snapshot = err?.snapshot ?? await snapshotApp(opener, err)
+      await record(conversationId, `Herdr.app slash error: ${reason}; snapshot=${JSON.stringify(snapshot)}`)
+      return { reason }
+    }
+  }
+  if (!inHerdrPane) return decline("not in a Herdr pane")
 
   try {
     const [agent, pluginList] = await Promise.all([
@@ -80,22 +138,32 @@ export async function interceptAnnotateSlash(payload, {
     const [executable, namespace, entrypoint] = popup.command ?? []
     const binary = namespace === "herdr" && entrypoint === "hosted-pane" && path.isAbsolute(executable)
       ? executable : undefined
-    let document
-    if (argument !== null) {
-      if (!path.isAbsolute(payload.cwd ?? "")) return decline("relative cwd")
-      document = path.resolve(payload.cwd, argument)
-      if (!(await stat(document)).isFile()) return decline("document is not a file")
-    }
-    const release = await claimTurn(inboxRoot, payload.conversationId, payload.initialNumSteps)
-    if (!release) return "replayed"
-    let launched = false
-    try {
-      launched = await launch({ pane, conversationId: payload.conversationId, document, binary, env })
-      return launched ? "opened" : decline("popup launcher failed to start")
-    } finally {
-      if (!launched) await release()
-    }
+    const document = await slashDocument(argument, payload.cwd)
+    return await launchOnce({ pane, conversationId: payload.conversationId, document, binary, env }, payload, {
+      inboxRoot, launch, decline,
+    })
   } catch (err) {
     return decline(err.message)
+  }
+}
+
+async function slashDocument(argument, cwd) {
+  if (argument === null) return undefined
+  if (!path.isAbsolute(cwd ?? "")) throw new Error("relative cwd")
+  const document = path.resolve(cwd, argument)
+  if (!(await stat(document)).isFile()) throw new Error("document is not a file")
+  return document
+}
+
+async function launchOnce(review, payload, { inboxRoot, launch, decline }) {
+  const release = await claimTurn(inboxRoot, payload.conversationId, payload.initialNumSteps)
+  if (!release) return "replayed"
+  let launched = false
+  try {
+    launched = await launch(review)
+    if (!launched) return decline("popup launcher failed to start")
+    return "opened"
+  } finally {
+    if (!launched) await release()
   }
 }

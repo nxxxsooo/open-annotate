@@ -57,7 +57,8 @@ snapshot stores. An explicit `PLANNOTATOR_DATA_DIR` can still open a retained ol
 
 ## Herdr
 
-The [Herdr commands](../README.md#herdr) use an enabled plugin with ID `annotate`.
+The [Herdr TUI commands](../README.md#herdr) use an enabled plugin with ID `annotate`.
+AGY review in Herdr.app uses hc and the app's peek without this manifest.
 For a local setup on macOS (tested with Herdr 0.9.5), save this as `herdr-plugin.toml`
 and run `herdr plugin link /absolute/path/to/plugin-directory`:
 
