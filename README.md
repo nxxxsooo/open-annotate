@@ -1,14 +1,14 @@
-# OpenCode Annotate
+# Open Annotate
 
 **Review OpenCode AI replies, Markdown documents, and webpages — send annotated feedback to the originating session.**
 
-[![npm](https://img.shields.io/npm/v/@nxxxsooo/opencode-annotate)](https://www.npmjs.com/package/@nxxxsooo/opencode-annotate)
-[![CI](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml/badge.svg)](https://github.com/nxxxsooo/opencode-annotate/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@nxxxsooo/open-annotate)](https://www.npmjs.com/package/@nxxxsooo/open-annotate)
+[![CI](https://github.com/nxxxsooo/open-annotate/actions/workflows/ci.yml/badge.svg)](https://github.com/nxxxsooo/open-annotate/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[Website](https://mjshao.fun/opencode-annotate/) · [Install](#install) · [Workflows](#workflows) · [Browser review](#browser-review-optional) · [Configuration](#configuration)
+[Website](https://mjshao.fun/open-annotate/) · [Install](#install) · [Workflows](#workflows) · [Browser review](#browser-review-optional) · [Configuration](#configuration)
 
-This **unofficial OpenCode plugin** bundles the native [terminal reviewer](tui/README.md) — no separate reviewer install is required. The optional [browser companion](#browser-review-optional) adds Chrome delivery and Safari copy-only review. Published on npm as `@nxxxsooo/opencode-annotate`.
+This **unofficial OpenCode plugin** bundles the native [terminal reviewer](tui/README.md) — no separate reviewer install is required. The optional [browser companion](#browser-review-optional) adds Chrome delivery and Safari copy-only review. Published on npm as `@nxxxsooo/open-annotate`.
 
 | Surface | Reviews | Entry point |
 |---|---|---|
@@ -21,14 +21,14 @@ This **unofficial OpenCode plugin** bundles the native [terminal reviewer](tui/R
 Requires **OpenCode 2.2.0+**. The npm package includes **Annotate TUI**, built from [`tui/`](tui/README.md) for macOS arm64/x64, Linux arm64/x64 and Windows x64. See its [platform requirements](tui/README.md#source-and-build). The OpenCode terminal handoff has been tested on macOS; Windows handoff has not yet been verified.
 
 ```sh
-opencode plugin add @nxxxsooo/opencode-annotate@latest
+opencode plugin add @nxxxsooo/open-annotate@latest
 ```
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nxxxsooo/opencode-annotate/main/docs/assets/terminal-review.gif" alt="Bundled terminal reviewer selecting a passage in a Markdown plan and saving an inline comment" width="720">
+  <img src="https://raw.githubusercontent.com/nxxxsooo/open-annotate/main/docs/assets/terminal-review.gif" alt="Bundled terminal reviewer selecting a passage in a Markdown plan and saving an inline comment" width="720">
 </p>
 
-The real bundled reviewer, using a synthetic Markdown plan. [Capture details](https://github.com/nxxxsooo/opencode-annotate/blob/main/docs/assets/README.md).
+The real bundled reviewer, using a synthetic Markdown plan. [Capture details](https://github.com/nxxxsooo/open-annotate/blob/main/docs/assets/README.md).
 
 OpenCode loads the server tools and TUI commands from one entry in your global **`opencode.json`** or **`opencode.jsonc`**. Run `/reload` if the command list has not refreshed.
 
@@ -37,7 +37,7 @@ Manual configuration, preserving other entries:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["@nxxxsooo/opencode-annotate@latest"]
+  "plugins": ["@nxxxsooo/open-annotate@latest"]
 }
 ```
 
@@ -89,7 +89,7 @@ Open the extension panel on any webpage and choose an automatically registered O
 ```
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/nxxxsooo/opencode-annotate/main/docs/assets/browser-review.png" alt="Chrome extension panel with a saved webpage comment and an explicit Send 1 note button" width="440">
+  <img src="https://raw.githubusercontent.com/nxxxsooo/open-annotate/main/docs/assets/browser-review.png" alt="Chrome extension panel with a saved webpage comment and an explicit Send 1 note button" width="440">
   <br>
   <em>Real v0.13.0 extension panel with synthetic feedback; captured in an isolated headless tab. The current panel adds cross-page rounds and a destination picker.</em>
 </p>
@@ -147,9 +147,11 @@ annotate-tui herdr terminal --lines 5 --print
 
 Outside Herdr, use `annotate-tui docs/plan.md` to copy feedback via a terminal that supports OSC 52. `herdr open` requires a Herdr pane.
 
-## Upgrading from the TUI-only package
+## Upgrading from an older package
 
-`opencode-annotate` replaces `opencode-plannotator-tui` (0.4.2 and earlier). To switch, run `opencode plugin remove opencode-plannotator-tui@latest` and then install this package as shown above.
+If you installed `@nxxxsooo/opencode-annotate`, replace the package value in `opencode.json(c)` with `@nxxxsooo/open-annotate@latest`, keep your options, then run `opencode plugin list`.
+
+Open Annotate replaces `opencode-plannotator-tui` (0.4.2 and earlier). To switch, run `opencode plugin remove opencode-plannotator-tui@latest` and then install this package as shown above.
 
 Move its entry from `cli.json` to `opencode.json(c)`, retaining the whole entry and any `options`. Keep one entry so the TUI is loaded once and the server entry can synchronize options.
 
@@ -173,7 +175,7 @@ it ends the turn with a visible reason without running the model. Outside
 Herdr on macOS, the skill uses Ghostty or Terminal. URL and HTML targets use
 the browser companion.
 
-Set up AGY manually from one installed package (`npm install -g @nxxxsooo/opencode-annotate`;
+Set up AGY manually from one installed package (`npm install -g @nxxxsooo/open-annotate`;
 find the package under `npm root -g`) or a checkout with `npm run build:tui`:
 
 1. Link the package's `agy/skills/annotate` directory as `~/.agents/skills/annotate`.
@@ -191,10 +193,10 @@ just closes. `Ctrl+C` closes without sending.
 
 - **CLI Commands**:
   ```sh
-  npx --package @nxxxsooo/opencode-annotate@latest agy-annotate status
-  npx --package @nxxxsooo/opencode-annotate@latest agy-annotate tui
-  npx --package @nxxxsooo/opencode-annotate@latest agy-annotate web
-  npx --package @nxxxsooo/opencode-annotate@latest agy-annotate queue
+  npx --package @nxxxsooo/open-annotate@latest agy-annotate status
+  npx --package @nxxxsooo/open-annotate@latest agy-annotate tui
+  npx --package @nxxxsooo/open-annotate@latest agy-annotate web
+  npx --package @nxxxsooo/open-annotate@latest agy-annotate queue
   ```
 
 ### Match OpenCode's colors
@@ -269,7 +271,7 @@ See [implementation plan](docs/annotate-html-integration-plan.md) and [shipped-a
 
 Keep **Developer mode** on and update the `browser/` folder that Chrome loaded. An up-to-date native host checks the installed unpacked files when the panel connects. If that copy has a newer manifest version and the review is idle, Annotate reloads once, then you can reopen the panel with the extension icon or **Alt+Shift+A**. Updates wait if notes, drafts, or a retry are pending, or another review panel is open. Finish the review and use **Reload Annotate** when ready.
 
-A newly opened sidebar can load the updated `panel.mjs` while Chrome still runs an older `worker.mjs`. The panel detects this protocol mismatch and shows **Annotate was updated** with a **Reload Annotate** button. Use it or click **Reload** for **OpenCode Annotate** in `chrome://extensions` to load the first version with automatic reload, or after editing files without a manifest version increase. Saved extension-local notes and drafts survive an extension reload. Reopen OpenCode or run `npm run install:bridge` if the native host also needs updating.
+A newly opened sidebar can load the updated `panel.mjs` while Chrome still runs an older `worker.mjs`. The panel detects this protocol mismatch and shows **Annotate was updated** with a **Reload Annotate** button. Use it or click **Reload** for **Open Annotate** in `chrome://extensions` to load the first version with automatic reload, or after editing files without a manifest version increase. Saved extension-local notes and drafts survive an extension reload. Reopen OpenCode or run `npm run install:bridge` if the native host also needs updating.
 
 For diagnosis, compare the running worker's source (DevTools/CDP `Debugger.getScriptSource`) with `browser/worker.mjs` in the loaded checkout. The manifest version alone cannot identify edits to an unpacked extension.
 
@@ -293,7 +295,7 @@ Opening a review makes no model call. Confirming sends a normal user prompt and 
 `@latest` selects the npm release channel. OpenCode caches installed packages; it does not follow this repository's commits. Update just this plugin with:
 
 ```sh
-opencode plugin update @nxxxsooo/opencode-annotate@latest
+opencode plugin update @nxxxsooo/open-annotate@latest
 ```
 
 Run `/reload` if the command list has not refreshed. Check the installed version with `opencode plugin list`.
@@ -301,7 +303,7 @@ Run `/reload` if the command list has not refreshed. Check the installed version
 To remove it:
 
 ```sh
-opencode plugin remove @nxxxsooo/opencode-annotate@latest
+opencode plugin remove @nxxxsooo/open-annotate@latest
 ```
 
 ## Configuration
@@ -315,7 +317,7 @@ Enable auto-annotation in the plugin entry in **`opencode.jsonc`** (or `opencode
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
-      "package": "@nxxxsooo/opencode-annotate@latest",
+      "package": "@nxxxsooo/open-annotate@latest",
       "options": {
         "autoAnnotate": true,
         "autoAnnotateThreshold": 2000, // Open when the reply exceeds this many characters.
@@ -354,7 +356,7 @@ The bundled reviewer is selected automatically. Use `binary` only to override it
 {
   "plugins": [
     {
-      "package": "@nxxxsooo/opencode-annotate@latest",
+      "package": "@nxxxsooo/open-annotate@latest",
       "options": { "binary": "/path/to/annotate-tui" }
     }
   ]
@@ -372,7 +374,7 @@ Each review has its own private temporary source and annotation store. Successfu
 
 ```sh
 PLANNOTATOR_DATA_DIR="<retained-directory>/data" \
-  npx --package @nxxxsooo/opencode-annotate annotate-tui "<retained-directory>/<snapshot>"
+  npx --package @nxxxsooo/open-annotate annotate-tui "<retained-directory>/<snapshot>"
 ```
 
 Use the `snapshot` value from `review.json`. Press `H` to restore archived notes, then `E` to copy them for pasting into OpenCode. An **E → F** archive is preserved even when `--export` reports "No annotations."
@@ -393,7 +395,7 @@ Rust 1.96+ is needed to build from source. Unit tests use the bundled annotation
 
 Set `ANNOTATE_TUI_BINARY` to test a custom binary or launcher through the plugin's real configuration path. For a build with a centered 120-column viewport, also set `ANNOTATE_EXPECT_MARGIN=10` to assert blank margins in the 140-column smoke terminal. These variables configure the test, not the shipped plugin.
 
-For development loading, set the plugin entry in `opencode.json(c)` to this checkout's absolute directory, preserving its `options`, and run `/reload`. Remove any duplicate entry in `cli.json`. The older `npm run install:plugin` helper switches **only the TUI** entry in `cli.json`; use it only for TUI-only development.
+For development loading, set the plugin entry in `opencode.json(c)` to this checkout's absolute directory, preserving its `options`, and run `/reload`. Remove any duplicate entry in `cli.json`.
 
 See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 </details>
@@ -412,6 +414,6 @@ See [release instructions](docs/releasing.md) and [changelog](CHANGELOG.md).
 - 选中文字 → `c` 写批注 → Enter 保存 → `q` 发送并返回。
 - 写批注中途按 `Ctrl+S`，一步保存、返回并发送（中文输入法开着也有效）；`Ctrl+C` 返回后由 OpenCode 询问。
 - 文档采用独立快照，反馈附原文件路径，确认后发回发起批注的会话。
-- 更新：`opencode plugin update @nxxxsooo/opencode-annotate@latest`，命令未刷新时运行 `/reload`。
+- 更新：`opencode plugin update @nxxxsooo/open-annotate@latest`，命令未刷新时运行 `/reload`。
 
 MIT licensed. Original terminal-reviewer copyright notices are preserved in [tui/LICENSE](tui/LICENSE).

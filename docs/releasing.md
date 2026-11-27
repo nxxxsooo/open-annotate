@@ -502,17 +502,17 @@ local options over rather than reset them.
 
 ## Package identity
 
-OpenCode Annotate publishes as `@nxxxsooo/opencode-annotate` from
-`nxxxsooo/opencode-annotate`. Versions 0.4.2 and earlier were published as
-`opencode-plannotator-tui`, which is now deprecated with a pointer to the new name.
+Open Annotate publishes as `@nxxxsooo/open-annotate` from
+`nxxxsooo/open-annotate`. Versions 0.4.2 and earlier were published as
+`opencode-plannotator-tui`, which is now deprecated.
 The unscoped npm name `opencode-annotate` belongs to an unrelated package.
 
 To switch the current server-plus-TUI installation from a checkout back to npm, replace
 only its `package` value in the existing `opencode.json(c)` entry with
-`@nxxxsooo/opencode-annotate@latest`, preserving its options. Update that package and verify
+`@nxxxsooo/open-annotate@latest`, preserving its options. Update that package and verify
 it with `opencode plugin list`; run `/reload` if necessary. Keep one entry, without a
-duplicate in `cli.json`. The older `scripts/install-plugin.mjs` helper handles TUI-only
-CLI entries and is not the migration path for this combined package.
+duplicate in `cli.json`. For development, set the package value in `opencode.jsonc`
+to the checkout's absolute path, preserve the options, and run `/reload`.
 
 The npm package, Git tag and GitHub Release use the same semver. The maintained
 source is this repository, including the Rust reviewer in `tui/`; OpenCode installs
@@ -521,16 +521,16 @@ reviewer repository, release, upstream download or synchronization step.
 
 ## Bootstrap
 
-A package name that does not exist on npm yet starts with one direct publish from the
-maintainer's terminal. With CI green on a clean commit, run this as one block:
+A new package name needs one direct publish before npm accepts a Trusted Publisher.
+Once the GitHub repository has been renamed and CI is green for the release commit,
+Mingjian publishes the minimal `@nxxxsooo/open-annotate@0.0.0-bootstrap` placeholder
+under the `bootstrap` dist-tag. Run this from the placeholder directory:
 
 ```sh
 npm login
-npm publish --access public
-npm trust github @nxxxsooo/opencode-annotate --file publish.yml --repo nxxxsooo/opencode-annotate --allow-publish --yes
+npm publish --access public --tag bootstrap
+npm trust github @nxxxsooo/open-annotate --file publish.yml --repo nxxxsooo/open-annotate --allow-publish --yes
 ```
-
-For a rename, add `npm deprecate <old-package> "Renamed to <new-package>"`.
 
 npm 12.2 behaves as follows:
 
@@ -538,7 +538,11 @@ npm 12.2 behaves as follows:
 - `npm view` returns 404 until the real version arrives.
 - `npm trust` succeeds right after the publish and grants `publish, stage publish`.
 
-Push the matching tag afterwards. `publish.yml` verifies the bootstrap archive and skips the upload.
+Push `v0.22.0` from the release commit within two days of setting trust, while npm's
+first-trusted-publish window is open. `publish.yml` publishes `0.22.0` through OIDC.
+Verify the workflow upload and the registry's `latest` tag to confirm trusted publishing.
+
+For the previous package, `publish.yml` verified the bootstrap archive and skipped the upload.
 This was done for 0.5.0 on 2026-10-21 (trust id `8bb95722`).
 
 Keep publishing protected by 2FA and use OIDC for subsequent automated releases.
@@ -557,15 +561,15 @@ provenance was first exercised by 0.6.0 on 2026-10-22.
    executables, restores their executable bits, verifies completeness and the host version,
    then runs package checks and publishes through OIDC. Rust source stays in Git; build
    caches are excluded. The npm allowlist includes native executables, launcher, resolver and license.
-5. If that version already exists (for example, the bootstrap), the workflow
+5. If that version already exists, the workflow
    compares published file bytes and executable bits with the local package before
    skipping the upload. Compressed archive checksums can differ between platforms.
-6. Verify `npm view @nxxxsooo/opencode-annotate version dist-tags --json`, then create
+6. Verify `npm view @nxxxsooo/open-annotate version dist-tags --json`, then create
    the matching GitHub Release with user-facing changes and install/update commands.
 7. Refresh the maintainer's installation:
 
    ```sh
-   opencode plugin update @nxxxsooo/opencode-annotate@latest
+   opencode plugin update @nxxxsooo/open-annotate@latest
    opencode plugin list
    ```
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.22.0 — Open Annotate
+
+- Renamed the project to Open Annotate, the npm package to
+  `@nxxxsooo/open-annotate`, and the repository to `nxxxsooo/open-annotate`.
+  The website is [mjshao.fun/open-annotate](https://mjshao.fun/open-annotate/).
+- If you installed `@nxxxsooo/opencode-annotate`, replace the package value in
+  `opencode.json(c)` with `@nxxxsooo/open-annotate@latest`, keep your options,
+  and run `opencode plugin list`.
+- Runtime IDs, commands, binaries, and storage and configuration paths are unchanged.
+
 ## 0.21.1 — AGY review in Herdr.app
 
 - Open `/annotate` and local documents directly from AGY panes and sub-agents in Herdr.app. Annotate floats over an identified focused terminal or opens in the caller's or host's tab without taking focus.

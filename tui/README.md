@@ -1,6 +1,6 @@
 # Annotate TUI
 
-The terminal reviewer is an owned component of **OpenCode Annotate**. Source, tests,
+The terminal reviewer is an owned component of **Open Annotate**. Source, tests,
 builds and releases live in this repository; `tui/` is an ordinary subfolder.
 
 ## Source and build
