@@ -123,9 +123,10 @@ sending. Claude, Codex, Pi, and OpenCode use the existing `herdr last`
 route. With the AGY hooks installed, `/annotate` can open the same popup before
 the model runs; the skill remains available as a fallback.
 
-Herdr.app (herdr-core) uses a floating peek for a focused AGY pane and opens
-the reviewer in the AGY tab without switching focus otherwise. It does not
-use the Herdr TUI plugin manifest.
+Herdr.app (herdr-core) uses a floating peek when it identifies the calling AGY
+terminal as focused. Otherwise, it opens a reviewer pane in the caller's tab,
+or in the host's tab for a sub-agent, without switching focus. Herdr.app does
+not use the Herdr TUI plugin manifest.
 
 Run the bundled `annotate-tui` directly from a Herdr pane. Herdr needs an enabled
 `annotate` plugin with a `doc` pane entrypoint; see the [TUI setup](tui/README.md#herdr).
@@ -165,11 +166,12 @@ documents and webpages.
 ## Antigravity (AGY) support
 
 In a configured Herdr TUI pane, `/annotate` opens a native overlay before the
-model runs and `prefix+a` opens the latest reply. In Herdr.app, `/annotate`
-and `/annotate <local-document>` use the app's peek. The hook opens it before
-the model only when hc and AGY can verify the conversation and report a safe
-state; otherwise the skill opens it. Outside Herdr on macOS, the skill uses
-Ghostty or Terminal. URL and HTML targets use the browser companion.
+model runs and `prefix+a` opens the latest reply. With the hooks installed,
+Herdr.app handles `/annotate` and `/annotate <local-document>` in panes and
+sub-agents. If the hook cannot verify the conversation or open the reviewer,
+it ends the turn with a visible reason without running the model. Outside
+Herdr on macOS, the skill uses Ghostty or Terminal. URL and HTML targets use
+the browser companion.
 
 Set up AGY manually from one installed package (`npm install -g @nxxxsooo/opencode-annotate`;
 find the package under `npm root -g`) or a checkout with `npm run build:tui`:

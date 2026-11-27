@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.1 — AGY review in Herdr.app
+
+- Open `/annotate` and local documents directly from AGY panes and sub-agents in Herdr.app. Annotate floats over an identified focused terminal or opens in the caller's or host's tab without taking focus.
+- End the turn with a visible reason when the reviewer cannot open. Successful and failed opens both avoid a model call.
+- Keep `/annotate` turns out of reply selection and route explicit Send back to the captured conversation. Browser protocol remains 11.
+
 ## 0.21.0 — Chrome companion setup and updates
 
 - When the Chrome companion is missing or disabled, web reviews from OpenCode
