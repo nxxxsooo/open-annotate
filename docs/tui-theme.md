@@ -7,7 +7,7 @@ shipped with this package.
 
 ```json
 {
-  "package": "/absolute/path/to/opencode-annotate",
+  "package": "/absolute/path/to/open-annotate",
   "options": {
     "inheritTheme": true
   }

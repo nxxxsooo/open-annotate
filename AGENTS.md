@@ -1,4 +1,4 @@
-# opencode-annotate
+# Open Annotate
 
 Unofficial OpenCode annotation plugin. The owned Rust reviewer in `tui/` supplies text
 review; the browser companion supplies webpage review. This repository owns both UIs,

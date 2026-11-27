@@ -1,5 +1,5 @@
 ---
-name: OpenCode Annotate
+name: Open Annotate
 description: Compact annotation workspace with a warm, calm, task-focused sidebar.
 colors:
   bg: "light-dark(#faf9f5, #20201f)"
@@ -137,7 +137,7 @@ components:
     padding: "10px 16px 12px"
 ---
 
-# Design System: OpenCode Annotate
+# Design System: Open Annotate
 
 ## Overview
 

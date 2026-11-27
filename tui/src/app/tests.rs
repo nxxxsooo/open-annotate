@@ -12,6 +12,7 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+use ratatui::layout::Position;
 
 use super::send::SendState;
 use super::{App, Mode};
@@ -860,6 +861,71 @@ fn a_comment_can_span_lines_and_enter_saves_it() {
     app.handle_event(&key(KeyCode::Enter, KeyModifiers::NONE)).expect("save");
     let placed = app.open.store.placed();
     assert_eq!(placed.last().expect("annotation").annotation.body, "first line\nsecond\nthird");
+}
+
+#[test]
+fn compose_hints_fit_their_borders_at_every_width() {
+    let mut app = app(Box::new(Discard));
+    for (cols, top, bottom) in [
+        (90, "comment · enter saves · ctrl+s sends", "esc cancels · shift+enter new line · ctrl+j"),
+        (40, "comment · enter saves · ctrl+s sends", "esc cancels · shift+enter new line"),
+        (26, "comment · enter saves", "esc cancels"),
+        (14, "comment", "esc cancels"),
+        (9, "comment", ""),
+        (8, "", ""),
+    ] {
+        app.mode = Mode::Compose;
+        app.shift_enter = true;
+        let mut terminal = Terminal::new(TestBackend::new(cols, 16)).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let inner = app.geometry.compose;
+        let buffer = terminal.backend().buffer();
+        let hint = |y| {
+            (0..cols)
+                .filter_map(|x| buffer.cell((x, y)))
+                .map(ratatui::buffer::Cell::symbol)
+                .collect::<String>()
+                .split(['╭', '╰'])
+                .nth(1)
+                .expect("left corner")
+                .split(['╮', '╯'])
+                .next()
+                .expect("border contents")
+                .trim_matches(['─', ' '])
+                .to_owned()
+        };
+        assert_eq!(hint(inner.y - 1), top, "{cols} columns, top");
+        assert_eq!(hint(inner.bottom()), bottom, "{cols} columns, bottom");
+    }
+}
+
+#[test]
+fn compose_places_the_terminal_cursor_at_the_display_cell() {
+    let mut app = app(Box::new(Discard));
+    for (cols, text, row, col) in [
+        (90, "是不是失败了没看到", 0, 18),
+        (90, "a中文b", 0, 6),
+        (90, "a👩‍💻🇨🇳中!", 0, 8),
+        (26, "1234567890123456789012中a👩‍💻", 1, 5),
+    ] {
+        app.mode = Mode::Compose;
+        app.compose = super::compose::Compose::with_text(text);
+        let mut terminal = Terminal::new(TestBackend::new(cols, 16)).expect("terminal");
+        terminal.draw(|frame| app.draw(frame)).expect("draw");
+        let inner = app.geometry.compose;
+        let cell = Position::new(inner.x + col, inner.y + row);
+        assert_eq!(terminal.get_cursor_position().expect("cursor"), cell, "{text:?}");
+        assert_eq!(terminal.backend().buffer()[cell].symbol(), " ", "caret is immediately after text");
+        if row > 0 {
+            assert_eq!(terminal.backend().buffer()[(inner.x, inner.y + 1)].symbol(), "中");
+            app.handle_event(&key(KeyCode::Up, KeyModifiers::NONE)).expect("up");
+            terminal.draw(|frame| app.draw(frame)).expect("draw");
+            assert_eq!(
+                terminal.get_cursor_position().expect("cursor"),
+                Position::new(app.geometry.compose.x + 5, app.geometry.compose.y),
+            );
+        }
+    }
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # Annotate TUI
 
-Owned Rust component of `opencode-annotate`, built from this directory. No nested Git
+Owned Rust component of Open Annotate, built from this directory. No nested Git
 repository, submodule, external Plannotator package or upstream synchronization.
 
 - `src/`: document parsing, cached layout, source mapping, terminal rendering and input.

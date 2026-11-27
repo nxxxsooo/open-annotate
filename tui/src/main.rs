@@ -1,4 +1,4 @@
-//! Annotate TUI: the terminal reviewer owned by `opencode-annotate`.
+//! Annotate TUI: the terminal reviewer owned by Open Annotate.
 
 mod app;
 mod archive;
