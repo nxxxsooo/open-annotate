@@ -389,7 +389,7 @@ impl App {
     }
 
     fn text_key(&mut self, key: KeyEvent) -> Result<()> {
-        match self.compose.handle_key(key) {
+        match self.compose.handle_key(key, usize::from(self.geometry.compose.width)) {
             ComposeAction::Cancel => self.mode = Mode::Browse,
             ComposeAction::Save => self.save_compose()?,
             ComposeAction::Edited => {}

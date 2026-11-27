@@ -42,7 +42,9 @@ doc_width = 120
 an empty string sends the notes alone. `annotate-tui config` prints the default.
 
 Hosted reviews write their send intent for the adapter: `q` sends notes and returns,
-`Ctrl+S` also saves an open comment, and `Ctrl+C` returns to the adapter's confirmation.
+and `Ctrl+C` returns to the adapter's confirmation while browsing. In a comment or edit
+box, `Enter` saves, `Ctrl+S` saves and sends, and `Esc` cancels. Use `Shift+Enter` (on
+terminals that distinguish it), `Alt+Enter`, or `Ctrl+J` to insert a line break.
 The adapters own session targeting and delivery. Markdown labels such as `**题库：**把`
 render in bold while selections still map to original source bytes.
 

@@ -103,11 +103,12 @@ enum Focus {
     Rail,
 }
 
-/// Screen geometry captured during the last draw, for hit-testing input.
+/// Screen geometry captured during the last draw, for input handling.
 #[derive(Debug, Default, Clone)]
 struct Geometry {
     tree: Rect,
     doc: Rect,
+    compose: Rect,
     /// Each toolbar item's screen rect, including wrapped rows.
     toolbar: Option<[Rect; TOOLBAR.len()]>,
     /// Screen rects of the rail bubbles drawn last frame, with their annotation ids.

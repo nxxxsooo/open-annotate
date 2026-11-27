@@ -1,12 +1,12 @@
 //! The comment box: a small multi-line editor.
 //!
 //! Enter saves; Shift+Enter (where the terminal's keyboard protocol distinguishes it),
-//! Alt+Enter and Ctrl+J insert a new line; Esc cancels. The buffer is a char vec with a
-//! cursor, wrapped to the box width for display only — the saved body keeps exactly the
-//! newlines the user typed.
+//! Alt+Enter and Ctrl+J insert a new line; Esc cancels. The cursor is a byte offset at a
+//! grapheme boundary. Soft wraps are only for display.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// What a keystroke did to the compose box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,53 +18,38 @@ pub(super) enum ComposeAction {
 
 #[derive(Debug, Default)]
 pub(super) struct Compose {
-    chars: Vec<char>,
+    text: String,
     cursor: usize,
 }
 
 /// Display cells per row inside the comment box.
 pub(super) const WRAP_WIDTH: usize = 45;
 
-fn width_of(c: char) -> usize {
-    UnicodeWidthChar::width(c).unwrap_or(0)
-}
-
 impl Compose {
     pub(super) fn with_text(text: &str) -> Self {
-        let chars: Vec<char> = text.chars().collect();
-        let cursor = chars.len();
-        Self { chars, cursor }
+        Self { text: text.to_owned(), cursor: text.len() }
     }
 
-    pub(super) fn value(&self) -> String {
-        self.chars.iter().collect()
+    pub(super) fn value(&self) -> &str {
+        &self.text
     }
 
-    pub(super) fn handle_key(&mut self, key: KeyEvent) -> ComposeAction {
+    pub(super) fn handle_key(&mut self, key: KeyEvent, width: usize) -> ComposeAction {
         match key.code {
             KeyCode::Esc => return ComposeAction::Cancel,
             KeyCode::Enter if key.modifiers.intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) => {
-                self.insert('\n');
+                self.insert_text("\n");
             }
             KeyCode::Enter => return ComposeAction::Save,
             KeyCode::Char('j' | 'J') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.insert('\n');
+                self.insert_text("\n");
             }
-            KeyCode::Backspace => {
-                if self.cursor > 0 {
-                    self.cursor -= 1;
-                    self.chars.remove(self.cursor);
-                }
-            }
-            KeyCode::Delete => {
-                if self.cursor < self.chars.len() {
-                    self.chars.remove(self.cursor);
-                }
-            }
+            KeyCode::Backspace => self.replace(self.previous(), self.cursor, ""),
+            KeyCode::Delete => self.replace(self.cursor, self.next(), ""),
             // Cmd+arrows arrive as Super+arrow (keyboard protocol) or as the Ctrl+A/Ctrl+E and
             // Alt+B/Alt+F that macOS terminals send for Cmd/Option+Left/Right.
             KeyCode::Up if key.modifiers.contains(KeyModifiers::SUPER) => self.cursor = 0,
-            KeyCode::Down if key.modifiers.contains(KeyModifiers::SUPER) => self.cursor = self.chars.len(),
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SUPER) => self.cursor = self.text.len(),
             KeyCode::Left if key.modifiers.contains(KeyModifiers::SUPER) => self.line_start(),
             KeyCode::Right if key.modifiers.contains(KeyModifiers::SUPER) => self.line_end(),
             KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => self.line_start(),
@@ -77,14 +62,14 @@ impl Compose {
             }
             KeyCode::Char('b') if key.modifiers == KeyModifiers::ALT => self.word(-1),
             KeyCode::Char('f') if key.modifiers == KeyModifiers::ALT => self.word(1),
-            KeyCode::Left => self.cursor = self.cursor.saturating_sub(1),
-            KeyCode::Right => self.cursor = (self.cursor + 1).min(self.chars.len()),
-            KeyCode::Up => self.move_vertical(-1, WRAP_WIDTH),
-            KeyCode::Down => self.move_vertical(1, WRAP_WIDTH),
+            KeyCode::Left => self.cursor = self.previous(),
+            KeyCode::Right => self.cursor = self.next(),
+            KeyCode::Up => self.move_vertical(-1, width),
+            KeyCode::Down => self.move_vertical(1, width),
             KeyCode::Home => self.line_start(),
             KeyCode::End => self.line_end(),
             KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
-                self.insert(c);
+                self.replace(self.cursor, self.cursor, c.encode_utf8(&mut [0; 4]));
             }
             _ => {}
         }
@@ -93,124 +78,133 @@ impl Compose {
 
     /// Insert pasted text as typed characters, newlines included.
     pub(super) fn insert_text(&mut self, text: &str) {
-        for c in text.replace("\r\n", "\n").replace('\r', "\n").chars() {
-            self.insert(c);
-        }
+        self.replace(self.cursor, self.cursor, &text.replace("\r\n", "\n").replace('\r', "\n"));
     }
 
-    fn insert(&mut self, c: char) {
-        self.chars.insert(self.cursor, c);
-        self.cursor += 1;
+    fn replace(&mut self, start: usize, end: usize, text: &str) {
+        self.text.replace_range(start..end, text);
+        // A combining mark or joiner can merge the text on either side of an edit.
+        let after_edit = start + text.len();
+        self.cursor = self
+            .text
+            .grapheme_indices(true)
+            .find(|&(offset, _)| offset >= after_edit)
+            .map_or(self.text.len(), |(offset, _)| offset);
+    }
+
+    fn previous(&self) -> usize {
+        self.text[..self.cursor].grapheme_indices(true).next_back().map_or(0, |(offset, _)| offset)
+    }
+
+    fn next(&self) -> usize {
+        self.cursor + self.text[self.cursor..].graphemes(true).next().map_or(0, str::len)
     }
 
     /// Start of the current logical line.
     fn line_start(&mut self) {
-        while self.cursor > 0 && self.chars.get(self.cursor - 1) != Some(&'\n') {
-            self.cursor -= 1;
-        }
+        self.cursor = self.text[..self.cursor].rfind('\n').map_or(0, |i| i + 1);
     }
 
     /// End of the current logical line.
     fn line_end(&mut self) {
-        while self.cursor < self.chars.len() && self.chars.get(self.cursor) != Some(&'\n') {
-            self.cursor += 1;
-        }
+        let rest = &self.text[self.cursor..];
+        let line = rest.split('\n').next().unwrap_or_default();
+        self.cursor += line.strip_suffix('\r').unwrap_or(line).len();
     }
 
     /// Jump to the previous word start or the next word end, skipping whitespace first.
     fn word(&mut self, direction: isize) {
-        let blank_at = |i: usize| self.chars.get(i).map(|c| c.is_whitespace());
-        let mut cursor = self.cursor;
-        if direction < 0 {
-            while cursor > 0 && blank_at(cursor - 1) == Some(true) {
-                cursor -= 1;
+        fn word_len<'a>(graphemes: impl Iterator<Item = &'a str>) -> usize {
+            let mut graphemes = graphemes.peekable();
+            let blank = |grapheme: &str| grapheme.chars().next().is_some_and(char::is_whitespace);
+            let mut len = 0;
+            while graphemes.peek().is_some_and(|g| blank(g)) {
+                len += graphemes.next().map_or(0, str::len);
             }
-            while cursor > 0 && blank_at(cursor - 1) == Some(false) {
-                cursor -= 1;
-            }
-        } else {
-            while blank_at(cursor) == Some(true) {
-                cursor += 1;
-            }
-            while blank_at(cursor) == Some(false) {
-                cursor += 1;
-            }
+            len + graphemes.take_while(|g| !blank(g)).map(str::len).sum::<usize>()
         }
-        self.cursor = cursor;
+        if direction < 0 {
+            self.cursor -= word_len(self.text[..self.cursor].graphemes(true).rev());
+        } else {
+            self.cursor += word_len(self.text[self.cursor..].graphemes(true));
+        }
     }
 
     /// Move to the display row above or below, landing on the nearest column at or left of
     /// the current one. Past the first or last row the cursor goes to the start or end.
     fn move_vertical(&mut self, delta: isize, width: usize) {
-        let (_, spots) = self.layout(width, |_| true);
-        let (row, col) = spots.get(self.cursor).copied().unwrap_or_default();
-        let last = spots.last().map_or(0, |spot| spot.0);
+        let (_, spots) = self.layout(width);
+        let (row, col) = cursor_cell(&spots, self.cursor);
+        let last = spots.last().map_or(0, |spot| spot.1.0);
         let Some(target) = row.checked_add_signed(delta).filter(|&r| r <= last) else {
-            self.cursor = if delta < 0 { 0 } else { self.chars.len() };
+            self.cursor = if delta < 0 { 0 } else { self.text.len() };
             return;
         };
-        let on_target = || spots.iter().enumerate().filter(|(_, spot)| spot.0 == target);
+        let on_target = || spots.iter().filter(|(_, (row, _))| *row == target);
         self.cursor = on_target()
-            .rfind(|(_, spot)| spot.1 <= col)
+            .rfind(|(_, (_, column))| *column <= col)
             .or_else(|| on_target().next())
-            .map_or(self.cursor, |(i, _)| i);
+            .map_or(self.cursor, |(offset, _)| *offset);
     }
 
     /// The buffer wrapped to `width` display cells, with the cursor's (row, col) in that
     /// wrapping. Explicit newlines always break; a full row wraps to the next, and so does
     /// a cursor that would otherwise sit past the last cell of a full row.
     pub(super) fn wrapped(&self, width: usize) -> (Vec<String>, usize, usize) {
-        let (lines, spots) = self.layout(width, |i| i == self.cursor);
-        let (row, col) = spots.get(self.cursor).copied().unwrap_or_default();
+        let (lines, spots) = self.layout(width);
+        let (row, col) = cursor_cell(&spots, self.cursor);
         (lines, row, col)
     }
 
-    /// The display rows and the (row, col) of every cursor position `0..=len`. A position
-    /// right after a full row starts a new row only where `breaks` says so: at the cursor
-    /// when drawing, everywhere when moving, so each position has its own cell.
-    fn layout(&self, width: usize, breaks: impl Fn(usize) -> bool) -> (Vec<String>, Vec<(usize, usize)>) {
+    /// The display rows and the cell at each grapheme boundary. Use the same grapheme
+    /// widths as Ratatui so emoji sequences occupy the same cells in the layout and buffer.
+    fn layout(&self, width: usize) -> (Vec<String>, Vec<CursorStop>) {
         let width = width.max(1);
-        let mut lines = vec![String::new()];
-        let mut spots = Vec::with_capacity(self.chars.len() + 1);
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        let mut spots = Vec::new();
         let mut used = 0;
-        for i in 0..=self.chars.len() {
-            let c = self.chars.get(i).copied();
-            let w = match c {
-                Some('\n') | None => 0,
-                Some(c) => width_of(c),
-            };
-            if used + w > width || (used >= width && breaks(i)) {
-                lines.push(String::new());
+        for (offset, grapheme) in self.text.grapheme_indices(true).chain([(self.text.len(), "")]) {
+            let newline = grapheme.ends_with('\n');
+            // Match the buffer's treatment of controls; show a placeholder if an entire
+            // grapheme is wider than the text area (e.g. CJK in a one-cell-wide editor).
+            let cells = if grapheme.contains(char::is_control) { 0 } else { grapheme.width() };
+            let (symbol, cells) = if cells > width { ("�", 1) } else { (grapheme, cells) };
+            let wrap = used == width || used + cells > width;
+            if wrap {
+                lines.push(std::mem::take(&mut line));
                 used = 0;
             }
-            spots.push((lines.len() - 1, used));
-            match c {
-                Some('\n') => {
-                    lines.push(String::new());
-                    used = 0;
-                }
-                Some(c) => {
-                    if let Some(last) = lines.last_mut() {
-                        last.push(c);
-                    }
-                    used += w;
-                }
-                None => {}
+            spots.push((offset, (lines.len(), used)));
+            if newline && !wrap {
+                lines.push(std::mem::take(&mut line));
+                used = 0;
+            } else if !newline {
+                line.push_str(symbol);
+                used += cells;
             }
         }
+        lines.push(line);
         (lines, spots)
     }
+}
+
+type CursorStop = (usize, (usize, usize));
+
+fn cursor_cell(spots: &[CursorStop], cursor: usize) -> (usize, usize) {
+    spots.iter().find(|(offset, _)| *offset == cursor).map_or((0, 0), |(_, cell)| *cell)
 }
 
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use unicode_segmentation::UnicodeSegmentation;
 
     use super::{Compose, WRAP_WIDTH};
 
     fn at(text: &str, cursor: usize) -> Compose {
         let mut compose = Compose::with_text(text);
-        compose.cursor = cursor;
+        compose.cursor = text.grapheme_indices(true).nth(cursor).map_or(text.len(), |(offset, _)| offset);
         compose
     }
 
@@ -226,8 +220,29 @@ mod tests {
         assert_eq!((lines, row, col), (vec!["abc".to_owned(), "敏".to_owned()], 1, 0));
     }
 
+    #[test]
+    fn cursor_moves_over_graphemes_at_their_display_width() {
+        let mut compose = Compose::with_text("a中👩‍💻e\u{301}");
+        for expected in [6, 5, 3, 1, 0] {
+            let (_, row, col) = compose.wrapped(20);
+            assert_eq!((row, col), (0, expected));
+            press(&mut compose, KeyCode::Left, KeyModifiers::NONE);
+        }
+        assert_eq!(press(&mut compose, KeyCode::Right, KeyModifiers::NONE), 1);
+        press(&mut compose, KeyCode::Delete, KeyModifiers::NONE);
+        press(&mut compose, KeyCode::Right, KeyModifiers::NONE);
+        press(&mut compose, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(compose.value(), "ae\u{301}");
+    }
+
+    #[test]
+    fn a_newline_after_a_full_row_does_not_make_an_extra_blank_row() {
+        let (lines, row, col) = Compose::with_text("中文\nx").wrapped(4);
+        assert_eq!((lines, row, col), (vec!["中文".to_owned(), "x".to_owned()], 1, 1));
+    }
+
     fn press(compose: &mut Compose, code: KeyCode, modifiers: KeyModifiers) -> usize {
-        compose.handle_key(KeyEvent::new(code, modifiers));
+        compose.handle_key(KeyEvent::new(code, modifiers), WRAP_WIDTH);
         compose.cursor
     }
 
@@ -251,9 +266,9 @@ mod tests {
     fn up_and_down_cross_newlines_and_wide_chars() {
         let mut compose = at("翟敏翟\nabcd", 6);
         compose.move_vertical(-1, 4);
-        assert_eq!(compose.cursor, 3, "col 2 of 'abcd' -> after the wrapped 翟");
+        assert_eq!(compose.cursor, "翟敏翟".len(), "col 2 of 'abcd' -> after the wrapped 翟");
         compose.move_vertical(-1, 4);
-        assert_eq!(compose.cursor, 1, "col 2 on the first row is after 翟");
+        assert_eq!(compose.cursor, "翟".len(), "col 2 on the first row is after 翟");
     }
 
     #[test]

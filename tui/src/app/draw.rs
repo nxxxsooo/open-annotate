@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::compose::WRAP_WIDTH;
@@ -49,6 +49,21 @@ fn priority(kind: Kind) -> u8 {
         Kind::LooksGood => 1,
         Kind::Delete => 2,
     }
+}
+
+/// Only add complete hint items. Drop the padding before dropping a key.
+fn compose_hint(width: u16, items: &[&str]) -> String {
+    let width = usize::from(width);
+    let mut title = String::new();
+    for item in items.iter().filter(|item| !item.is_empty()) {
+        let separator = if title.is_empty() { "" } else { " · " };
+        if title.width() + separator.width() + item.width() > width {
+            break;
+        }
+        title.push_str(separator);
+        title.push_str(item);
+    }
+    if !title.is_empty() && title.width() + 2 <= width { format!(" {title} ") } else { title }
 }
 
 impl App {
@@ -99,8 +114,8 @@ impl App {
         }
         self.draw_footer(frame, footer);
         match &self.mode {
-            Mode::Compose => self.draw_compose(frame, &self.compose_title("comment")),
-            Mode::Edit(_) => self.draw_compose(frame, &self.compose_title("edit")),
+            Mode::Compose => self.draw_compose(frame, "comment"),
+            Mode::Edit(_) => self.draw_compose(frame, "edit"),
             Mode::Browse if self.pending.is_some() => self.draw_toolbar(frame),
             Mode::Pick => self.draw_pick(frame),
             Mode::FileSearch => self.draw_file_search(frame),
@@ -366,54 +381,62 @@ impl App {
         self.geometry.toolbar = Some(items);
     }
 
-    /// The compose box: at the pending selection when there is one, else over the rail
-    /// bubble being edited, else centered.
-    /// The compose box title; the Shift+Enter hint appears only when the terminal
-    /// actually distinguishes it, so the hint is never a lie.
-    fn compose_title(&self, verb: &str) -> String {
-        let newline = if self.shift_enter { "shift+enter new line" } else { "alt+enter new line" };
-        // In a hosted review the send chord is the one-step way back, so the title names it.
-        let send = match self.keys.chord_hint(Action::Send) {
-            key if self.is_hosted() && !key.is_empty() => format!(" \u{b7} {key} sends"),
-            _ => String::new(),
-        };
-        format!(" {verb} \u{b7} enter saves{send} \u{b7} {newline} \u{b7} esc cancels ")
-    }
-
-    fn draw_compose(&self, frame: &mut Frame, title: &str) {
-        let (lines, cursor_row, cursor_col) = self.compose.wrapped(WRAP_WIDTH);
-        let content_rows = lines.len().clamp(1, 8);
-        let height = content_rows as u16 + 2;
+    /// Anchor to the selection, the rail bubble being edited, or the viewport center.
+    fn compose_rect(&self, area: Rect, height: u16) -> Rect {
+        let area = self.viewport(area);
         let rect = self
             .float_origin(height, COMPOSE_WIDTH)
             .or_else(|| self.edit_origin(height, COMPOSE_WIDTH))
             .unwrap_or_else(|| {
-                let area = self.viewport(frame.area());
                 let width = COMPOSE_WIDTH.min(area.width);
                 Rect { x: area.x + (area.width - width) / 2, y: area.y + area.height / 2, width, height }
             });
-        frame.render_widget(Clear, rect);
-        let boxed = Block::default()
-            .borders(Borders::ALL)
+        Rect { y: rect.y.clamp(area.y, area.bottom().saturating_sub(height)), ..rect }.intersection(area)
+    }
+
+    fn draw_compose(&mut self, frame: &mut Frame, label: &str) {
+        let area = frame.area();
+        if area.height < 3 {
+            return;
+        }
+        let width = self.compose_rect(area, 3).width;
+        // Keep one cell of left padding when space allows, and at least one text cell.
+        let padding = u16::from(width > 3);
+        let text_width = width.saturating_sub(2 + padding);
+        if text_width == 0 {
+            return;
+        }
+        let (lines, cursor_row, cursor_col) = self.compose.wrapped(usize::from(text_width));
+        let content_rows = lines.len().min(usize::from((area.height - 2).min(8)));
+        let rect = self.compose_rect(area, content_rows as u16 + 2);
+        let send = self.keys.chord_hint(Action::Send);
+        let send = if send.is_empty() { String::new() } else { format!("{send} sends") };
+        let newline = if self.shift_enter { "shift+enter new line" } else { "alt+enter new line" };
+        let border_width = rect.width.saturating_sub(2);
+        let title = |items: &[&str]| Span::styled(compose_hint(border_width, items), Style::new().dim());
+        let boxed = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(palette().comment))
-            .title(Span::styled(title.to_owned(), Style::new().dim()));
+            .padding(Padding::left(padding))
+            .title(title(&[label, "enter saves", &send]))
+            .title_bottom(title(&["esc cancels", newline, "ctrl+j"]));
         let inner = boxed.inner(rect);
+        self.geometry.compose = inner;
+        frame.render_widget(Clear, rect);
         frame.render_widget(boxed, rect);
         // Keep the cursor's row visible when the comment is taller than the box.
         let scroll = cursor_row.saturating_sub(content_rows - 1);
         for (i, line) in lines.iter().skip(scroll).take(content_rows).enumerate() {
-            let row = Rect {
-                x: inner.x + 1,
-                y: inner.y + i as u16,
-                width: inner.width.saturating_sub(1),
-                height: 1,
-            };
-            frame.render_widget(Paragraph::new(Line::from(line.clone())), row);
+            frame.buffer_mut().set_stringn(
+                inner.x,
+                inner.y + i as u16,
+                line,
+                usize::from(inner.width),
+                Style::new(),
+            );
         }
-        let cursor_x = inner.x + 1 + cursor_col as u16;
-        let cursor_y = inner.y + (cursor_row - scroll) as u16;
-        frame.set_cursor_position((cursor_x.min(inner.right().saturating_sub(1)), cursor_y));
+        // The physical cursor is the caret, including when the terminal anchors IME preedit to it.
+        frame.set_cursor_position((inner.x + cursor_col as u16, inner.y + (cursor_row - scroll) as u16));
     }
 
     fn edit_origin(&self, height: u16, width: u16) -> Option<Rect> {
